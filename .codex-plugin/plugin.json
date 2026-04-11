@@ -1,0 +1,40 @@
+{
+  "name": "notion-multi-workspace",
+  "version": "0.1.1",
+  "description": "Read-only Codex plugin scaffold for routing Notion discovery across two named workspaces through a local MCP server.",
+  "author": {
+    "name": "nascent-technologies",
+    "url": "https://github.com/nascent-technologies"
+  },
+  "homepage": "https://github.com/nascent-technologies/notion-multi-workspace",
+  "repository": "https://github.com/nascent-technologies/notion-multi-workspace",
+  "license": "UNLICENSED",
+  "keywords": [
+    "notion",
+    "mcp",
+    "multi-workspace",
+    "productivity"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Notion Multi-Workspace",
+    "shortDescription": "Route Notion reads across two named workspaces.",
+    "longDescription": "Local MCP-backed read-only scaffold for a dual-Notion workflow where every tool call is explicitly routed to one of two configured workspaces to avoid cross-posting to the wrong org.",
+    "developerName": "nascent-technologies",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "websiteURL": "https://www.notion.so/",
+    "privacyPolicyURL": "https://www.notion.com/help/privacy",
+    "termsOfServiceURL": "https://www.notion.so/legal/terms-of-use",
+    "defaultPrompt": [
+      "List the configured Notion workspaces.",
+      "Search Workspace A for margin call notes.",
+      "Fetch the matching Workspace B page."
+    ],
+    "brandColor": "#111111"
+  }
+}
