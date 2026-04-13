@@ -1,7 +1,7 @@
 # Notion Multi-Workspace
 
 Standalone Codex plugin for working with multiple separate Notion workspaces from
-one session without risking cross-posting to the wrong org.
+one session without accidentally reading from the wrong org.
 
 ## Goal
 
@@ -74,6 +74,20 @@ When Codex is opened from this repo, the repo-local marketplace file points at
 the plugin root directly. That keeps the plugin self-contained instead of
 depending on another workspace's `.agents` config.
 
+## Release Checklist
+
+Before publishing publicly:
+
+- [x] normalized multi-workspace config only
+- [x] explicit `workspace` required on every tool call
+- [x] read-only tool surface only
+- [x] unit tests passing
+- [x] direct read-side smoke test passing
+- [x] stdio MCP smoke test passing
+- [ ] real token validation against intended workspaces
+- [x] README examples reflect the intended public naming and setup
+- [ ] push tagged release / publish repo updates
+
 ## Local Verification
 
 Use the system Python directly. On this machine, the default `python` and
@@ -100,11 +114,11 @@ Optional examples:
 ```bash
 /usr/bin/python3 scripts/smoke_test_read_side.py \
   --validate-tokens \
-  --workspace secondary \
+  --workspace workspace-b \
   --query "meeting naming convention"
 
 /usr/bin/python3 scripts/smoke_test_read_side.py \
-  --workspace "Finance Ops" \
+  --workspace "Workspace C" \
   --fetch-page "https://www.notion.so/..."
 ```
 
@@ -123,7 +137,7 @@ Optional example:
 ```bash
 /usr/bin/python3 scripts/smoke_test_stdio.py \
   --validate-tokens \
-  --workspace fin \
+  --workspace workspace-c \
   --query "meeting naming convention"
 ```
 
@@ -135,10 +149,13 @@ Optional example:
   token has access to the target pages or databases in Notion
 - `Unknown workspace ...`: run `list_workspaces` and use one of the advertised
   keys, names, or aliases
+- Real validation still required before production use: run the smoke scripts
+  with your actual workspace tokens and selectors
 - The repo's default `python` or `python3` points at a broken shim: use
   `/usr/bin/python3` for both tests and local MCP runs
 
 ## Next Step
 
-Add write-safe tools such as `create_page` and `update_page`, while keeping the
-same explicit workspace routing requirement for every write.
+Validate the normalized config against the real target workspaces, then decide
+whether the next step is public release hardening only or a later write-safe
+surface such as `create_page` and `update_page`.

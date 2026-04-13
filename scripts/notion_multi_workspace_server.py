@@ -26,7 +26,7 @@ from urllib import error, parse, request
 
 
 SERVER_NAME = "notion-multi-workspace"
-SERVER_VERSION = "0.2.0"
+SERVER_VERSION = "0.3.0"
 NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -121,7 +121,7 @@ def parse_workspace_keys(raw_value: str) -> list[str]:
         keys.append(candidate)
     if not keys:
         raise ConfigError(
-            f"{WORKSPACE_KEYS_ENV_VAR} must list at least one workspace key, for example: primary,secondary"
+            f"{WORKSPACE_KEYS_ENV_VAR} must list at least one workspace key, for example: workspace-a,workspace-b"
         )
     return keys
 
@@ -738,7 +738,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                 "workspace": {
                     "type": "string",
                     "description": (
-                        "Workspace selector such as primary, finance, Workspace A, or workspace-b."
+                        "Workspace selector such as workspace-a, workspace-b, Workspace C, or an allowed alias."
                     ),
                 },
                 "query": {
@@ -777,7 +777,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                 "workspace": {
                     "type": "string",
                     "description": (
-                        "Workspace selector such as primary, finance, Workspace A, or workspace-b."
+                        "Workspace selector such as workspace-a, workspace-b, Workspace C, or an allowed alias."
                     ),
                 },
                 "page_id_or_url": {

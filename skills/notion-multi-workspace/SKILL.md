@@ -16,6 +16,7 @@ workspaces in the same session.
 - If the user says "Notion" without naming the workspace and the action is a
   write, ask which workspace to target.
 - Prefer `list_workspaces` first when the available selectors are unclear.
+- Prefer workspace keys/names that reflect the real org identity, not generic labels.
 
 ## Current Tools
 
@@ -26,5 +27,5 @@ workspaces in the same session.
 ## Implementation Note
 
 The current server is read-only by design. Use the bundled tools for
-cross-workspace discovery and page retrieval first, then add writes only after
-the routing rules are well tested.
+cross-workspace discovery and page retrieval first. Only add writes after real
+workspace validation proves the routing rules are trustworthy.

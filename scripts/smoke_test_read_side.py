@@ -31,10 +31,8 @@ def load_server_module():
 def default_workspace() -> str:
     return (
         os.environ.get("NOTION_SMOKE_WORKSPACE")
-        or os.environ.get("NOTION_WORKSPACE_PRIMARY_NAME")
-        or os.environ.get("NOTION_WORKSPACE_PRIMARY_TOKEN") and "primary"
-        or os.environ.get("NOTION_WORKSPACE_KEYS", "primary").split(",")[0].strip()
-        or "primary"
+        or os.environ.get("NOTION_WORKSPACE_KEYS", "workspace-a").split(",")[0].strip()
+        or "workspace-a"
     )
 
 
@@ -101,19 +99,17 @@ def ensure_validated_tokens_ok(payload: dict[str, Any]) -> None:
 def ensure_smoke_env(module) -> tempfile.TemporaryDirectory[str] | None:
     if os.environ.get(module.WORKSPACE_KEYS_ENV_VAR):
         return None
-    if os.environ.get("NOTION_WORKSPACE_PRIMARY_NAME") and os.environ.get("NOTION_TOKEN_PRIMARY"):
-        return None
 
     tempdir = tempfile.TemporaryDirectory()
     env_path = Path(tempdir.name) / "notion-multi-workspace-smoke.env"
     env_path.write_text(
         "\n".join(
             [
-                "NOTION_WORKSPACE_KEYS=primary,secondary",
-                "NOTION_WORKSPACE_PRIMARY_NAME=Workspace A",
-                "NOTION_WORKSPACE_PRIMARY_TOKEN=secret_primary_workspace_token",
-                "NOTION_WORKSPACE_SECONDARY_NAME=Workspace B",
-                "NOTION_WORKSPACE_SECONDARY_TOKEN=secret_secondary_workspace_token",
+                "NOTION_WORKSPACE_KEYS=workspace-a,workspace-b",
+                "NOTION_WORKSPACE_NOBLE_NAME=Workspace A",
+                "NOTION_WORKSPACE_NOBLE_TOKEN=secret_workspace-a_workspace_token",
+                "NOTION_WORKSPACE_SQUIDFORM_NAME=Workspace B",
+                "NOTION_WORKSPACE_SQUIDFORM_TOKEN=secret_workspace-b_workspace_token",
             ]
         )
         + "\n"
