@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -16,14 +17,23 @@ SERVER_PATH = Path(__file__).resolve().parent / "notion_multi_workspace_server.p
 SYSTEM_PYTHON = Path("/usr/bin/python3")
 
 
+def default_workspace() -> str:
+    return (
+        os.environ.get("NOTION_SMOKE_WORKSPACE")
+        or os.environ.get("NOTION_WORKSPACE_PRIMARY_NAME")
+        or os.environ.get("NOTION_WORKSPACE_PRIMARY_TOKEN") and "primary"
+        or os.environ.get("NOTION_WORKSPACE_KEYS", "primary").split(",")[0].strip()
+        or "primary"
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run an end-to-end stdio smoke test against the Notion multi-workspace MCP server."
     )
     parser.add_argument(
         "--workspace",
-        default=os.environ.get("NOTION_SMOKE_WORKSPACE")
-        or os.environ.get("NOTION_WORKSPACE_PRIMARY_NAME", "Workspace A"),
+        default=default_workspace(),
         help="Workspace selector to use for optional search/fetch calls.",
     )
     parser.add_argument(
@@ -115,6 +125,30 @@ def ensure_validated_tokens_ok(payload: dict[str, Any]) -> None:
         raise RuntimeError(f"Token validation failed: {summary}")
 
 
+def ensure_smoke_env() -> tempfile.TemporaryDirectory[str] | None:
+    if os.environ.get("NOTION_WORKSPACE_KEYS"):
+        return None
+    if os.environ.get("NOTION_WORKSPACE_PRIMARY_NAME") and os.environ.get("NOTION_TOKEN_PRIMARY"):
+        return None
+
+    tempdir = tempfile.TemporaryDirectory()
+    env_path = Path(tempdir.name) / "notion-multi-workspace-smoke.env"
+    env_path.write_text(
+        "\n".join(
+            [
+                "NOTION_WORKSPACE_KEYS=primary,secondary",
+                "NOTION_WORKSPACE_PRIMARY_NAME=Workspace A",
+                "NOTION_WORKSPACE_PRIMARY_TOKEN=secret_primary_workspace_token",
+                "NOTION_WORKSPACE_SECONDARY_NAME=Workspace B",
+                "NOTION_WORKSPACE_SECONDARY_TOKEN=secret_secondary_workspace_token",
+            ]
+        )
+        + "\n"
+    )
+    os.environ.setdefault("NOTION_MULTI_WORKSPACE_ENV_FILE", str(env_path))
+    return tempdir
+
+
 def call_tool(
     process: subprocess.Popen[bytes],
     request_id: int,
@@ -137,6 +171,7 @@ def call_tool(
 
 def main() -> int:
     args = parse_args()
+    tempdir = ensure_smoke_env()
 
     process = subprocess.Popen(
         [str(SYSTEM_PYTHON), str(SERVER_PATH)],
@@ -214,6 +249,8 @@ def main() -> int:
             process.stdin.close()
         process.terminate()
         process.wait(timeout=5)
+        if tempdir is not None:
+            tempdir.cleanup()
 
 
 if __name__ == "__main__":

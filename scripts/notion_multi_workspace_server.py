@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Minimal stdio MCP server for two explicit Notion workspaces.
+"""Minimal stdio MCP server for explicit multi-workspace Notion reads.
 
-This first pass is read-only and implements:
+This server is intentionally read-only and implements:
 
 - list_workspaces
 - search
 - fetch_page
 
-It intentionally uses only the Python standard library so the plugin can run
-without extra setup beyond the two Notion integration tokens.
+Every Notion tool call requires an explicit workspace selector. Workspace
+configuration is normalized around a workspace key list so the server can safely
+support more than two workspaces without changing code.
 """
 
 from __future__ import annotations
@@ -25,22 +26,16 @@ from urllib import error, parse, request
 
 
 SERVER_NAME = "notion-multi-workspace"
-SERVER_VERSION = "0.1.1"
+SERVER_VERSION = "0.2.0"
 NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 DOTENV_ENV_VAR = "NOTION_MULTI_WORKSPACE_ENV_FILE"
 DOTENV_PATH = PLUGIN_ROOT / ".env"
+WORKSPACE_KEYS_ENV_VAR = "NOTION_WORKSPACE_KEYS"
+LEGACY_WORKSPACE_SLOTS = ("PRIMARY", "SECONDARY")
 UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}"
-)
-
-
-EXPECTED_ENV_VARS = (
-    "NOTION_WORKSPACE_PRIMARY_NAME",
-    "NOTION_TOKEN_PRIMARY",
-    "NOTION_WORKSPACE_SECONDARY_NAME",
-    "NOTION_TOKEN_SECONDARY",
 )
 
 
@@ -63,12 +58,17 @@ class WorkspaceConfig:
     key: str
     name: str
     token: str
+    extra_aliases: tuple[str, ...] = ()
 
     @property
     def aliases(self) -> tuple[str, ...]:
-        slug = slugify(self.name)
-        aliases = {self.key, self.name.strip().lower(), slug}
-        return tuple(alias for alias in aliases if alias)
+        candidates = {self.key, self.name.strip().lower(), slugify(self.name)}
+        candidates.update(alias.strip().lower() for alias in self.extra_aliases if alias.strip())
+        candidates.update(slugify(alias) for alias in self.extra_aliases if alias.strip())
+        return tuple(sorted(alias for alias in candidates if alias))
+
+
+EXPECTED_ENV_VARS = (WORKSPACE_KEYS_ENV_VAR,)
 
 
 def slugify(value: str) -> str:
@@ -107,28 +107,131 @@ def resolve_dotenv_path() -> Path:
     return DOTENV_PATH
 
 
+def parse_workspace_keys(raw_value: str) -> list[str]:
+    """Parse a comma-separated workspace key list."""
+
+    keys: list[str] = []
+    seen: set[str] = set()
+    for chunk in raw_value.split(","):
+        candidate = slugify(chunk)
+        if not candidate:
+            continue
+        if candidate in seen:
+            raise ConfigError(f"Duplicate workspace key '{candidate}' in {WORKSPACE_KEYS_ENV_VAR}.")
+        seen.add(candidate)
+        keys.append(candidate)
+    if not keys:
+        raise ConfigError(
+            f"{WORKSPACE_KEYS_ENV_VAR} must list at least one workspace key, for example: primary,secondary"
+        )
+    return keys
+
+
+def workspace_name_env_var(key: str) -> str:
+    return f"NOTION_WORKSPACE_{key.upper()}_NAME"
+
+
+def workspace_token_env_var(key: str) -> str:
+    return f"NOTION_WORKSPACE_{key.upper()}_TOKEN"
+
+
+def workspace_aliases_env_var(key: str) -> str:
+    return f"NOTION_WORKSPACE_{key.upper()}_ALIASES"
+
+
+def split_aliases(raw_value: str | None) -> tuple[str, ...]:
+    if not raw_value:
+        return ()
+    aliases: list[str] = []
+    seen: set[str] = set()
+    for chunk in raw_value.split(","):
+        alias = chunk.strip()
+        if not alias:
+            continue
+        normalized = slugify(alias)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        aliases.append(alias)
+    return tuple(aliases)
+
+
+def maybe_seed_legacy_workspace_env() -> None:
+    """Map the old PRIMARY/SECONDARY env shape into the normalized config once."""
+
+    if os.getenv(WORKSPACE_KEYS_ENV_VAR):
+        return
+
+    legacy_pairs: list[tuple[str, str, str]] = []
+    for slot in LEGACY_WORKSPACE_SLOTS:
+        name = os.getenv(f"NOTION_WORKSPACE_{slot}_NAME")
+        token = os.getenv(f"NOTION_TOKEN_{slot}")
+        if name and token:
+            legacy_pairs.append((slot.lower(), name, token))
+
+    if not legacy_pairs:
+        return
+
+    os.environ.setdefault(
+        WORKSPACE_KEYS_ENV_VAR,
+        ",".join(key for key, _, _ in legacy_pairs),
+    )
+    for key, name, token in legacy_pairs:
+        os.environ.setdefault(workspace_name_env_var(key), name)
+        os.environ.setdefault(workspace_token_env_var(key), token)
+
+
 def load_workspace_configs() -> dict[str, WorkspaceConfig]:
-    """Load the two configured workspace bindings."""
+    """Load all configured workspace bindings from the normalized env model."""
 
     load_dotenv(resolve_dotenv_path())
-    missing = [name for name in EXPECTED_ENV_VARS if not os.getenv(name)]
-    if missing:
+    maybe_seed_legacy_workspace_env()
+
+    raw_keys = os.getenv(WORKSPACE_KEYS_ENV_VAR)
+    if not raw_keys:
         raise ConfigError(
-            "Missing environment variables: " + ", ".join(sorted(missing))
+            "Missing environment variable NOTION_WORKSPACE_KEYS. "
+            "Set it to a comma-separated list such as 'primary,secondary'."
         )
 
-    return {
-        "primary": WorkspaceConfig(
-            key="primary",
-            name=os.environ["NOTION_WORKSPACE_PRIMARY_NAME"],
-            token=os.environ["NOTION_TOKEN_PRIMARY"],
-        ),
-        "secondary": WorkspaceConfig(
-            key="secondary",
-            name=os.environ["NOTION_WORKSPACE_SECONDARY_NAME"],
-            token=os.environ["NOTION_TOKEN_SECONDARY"],
-        ),
-    }
+    workspace_keys = parse_workspace_keys(raw_keys)
+    configs: dict[str, WorkspaceConfig] = {}
+    missing: list[str] = []
+    alias_owners: dict[str, str] = {}
+
+    for key in workspace_keys:
+        name_var = workspace_name_env_var(key)
+        token_var = workspace_token_env_var(key)
+        name = os.getenv(name_var)
+        token = os.getenv(token_var)
+        if not name:
+            missing.append(name_var)
+        if not token:
+            missing.append(token_var)
+        if not name or not token:
+            continue
+
+        config = WorkspaceConfig(
+            key=key,
+            name=name,
+            token=token,
+            extra_aliases=split_aliases(os.getenv(workspace_aliases_env_var(key))),
+        )
+
+        for alias in config.aliases:
+            owner = alias_owners.get(alias)
+            if owner and owner != key:
+                raise ConfigError(
+                    f"Workspace selector alias '{alias}' is ambiguous between '{owner}' and '{key}'."
+                )
+            alias_owners[alias] = key
+
+        configs[key] = config
+
+    if missing:
+        raise ConfigError("Missing environment variables: " + ", ".join(sorted(missing)))
+
+    return configs
 
 
 def resolve_workspace(
@@ -143,19 +246,13 @@ def resolve_workspace(
 
     normalized = slugify(selector)
     for workspace in workspaces.values():
-        if normalized in {slugify(alias) for alias in workspace.aliases}:
+        if normalized in workspace.aliases:
             return workspace
 
     options = ", ".join(
         sorted(
-            {
-                workspace.key
-                for workspace in workspaces.values()
-            }
-            | {
-                workspace.name
-                for workspace in workspaces.values()
-            }
+            {workspace.key for workspace in workspaces.values()}
+            | {workspace.name for workspace in workspaces.values()}
         )
     )
     raise McpProtocolError(
@@ -570,6 +667,7 @@ def tool_list_workspaces(arguments: dict[str, Any]) -> dict[str, Any]:
                 summary["error"] = str(exc)
         summaries.append(summary)
     return {
+        "workspace_count": len(summaries),
         "workspaces": summaries,
         "read_only_tools": ["list_workspaces", "search", "fetch_page"],
     }
@@ -640,7 +738,7 @@ def tool_fetch_page(arguments: dict[str, Any]) -> dict[str, Any]:
 TOOLS: dict[str, dict[str, Any]] = {
     "list_workspaces": {
         "description": (
-            "List the two configured Notion workspaces and optional token health."
+            "List the configured Notion workspaces and optional token health."
         ),
         "inputSchema": {
             "type": "object",
@@ -667,7 +765,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                 "workspace": {
                     "type": "string",
                     "description": (
-                        "Workspace selector such as primary, secondary, Noble, or Workspace B."
+                        "Workspace selector such as primary, finance, Workspace A, or workspace-b."
                     ),
                 },
                 "query": {
@@ -706,7 +804,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                 "workspace": {
                     "type": "string",
                     "description": (
-                        "Workspace selector such as primary, secondary, Noble, or Workspace B."
+                        "Workspace selector such as primary, finance, Workspace A, or workspace-b."
                     ),
                 },
                 "page_id_or_url": {

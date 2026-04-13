@@ -1,7 +1,7 @@
 {
   "name": "notion-multi-workspace",
-  "version": "0.1.1",
-  "description": "Read-only Codex plugin scaffold for routing Notion discovery across two named workspaces through a local MCP server.",
+  "version": "0.2.0",
+  "description": "Read-only Codex plugin scaffold for routing Notion discovery across explicitly named workspaces through a local MCP server.",
   "author": {
     "name": "nascent-technologies",
     "url": "https://github.com/nascent-technologies"
@@ -19,8 +19,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Notion Multi-Workspace",
-    "shortDescription": "Route Notion reads across two named workspaces.",
-    "longDescription": "Local MCP-backed read-only scaffold for a dual-Notion workflow where every tool call is explicitly routed to one of two configured workspaces to avoid cross-posting to the wrong org.",
+    "shortDescription": "Route Notion reads across explicitly selected workspaces.",
+    "longDescription": "Local MCP-backed read-only scaffold for a multi-Notion workflow where every tool call is explicitly routed to one configured workspace to avoid cross-posting to the wrong org.",
     "developerName": "nascent-technologies",
     "category": "Productivity",
     "capabilities": [

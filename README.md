@@ -1,6 +1,6 @@
 # Notion Multi-Workspace
 
-Standalone Codex plugin for working with two separate Notion workspaces from
+Standalone Codex plugin for working with multiple separate Notion workspaces from
 one session without risking cross-posting to the wrong org.
 
 ## Goal
@@ -8,7 +8,7 @@ one session without risking cross-posting to the wrong org.
 The bundled Notion integration is typically bound to one connected workspace at
 a time. This plugin provides a small local MCP server that:
 
-- keeps two Notion credentials configured at once
+- keeps multiple Notion credentials configured at once
 - requires an explicit `workspace` selector on every tool call
 - starts with a read-only tool surface so routing can be proven safely first
 
@@ -39,21 +39,46 @@ Use either of these approaches:
 1. Copy [.env.example](./.env.example) to `.env`
 2. Or set `NOTION_MULTI_WORKSPACE_ENV_FILE` to point at an external env file
 
-Required variables:
+### Normalized multi-workspace config
+
+Set `NOTION_WORKSPACE_KEYS` to a comma-separated list of workspace keys. For
+each key, define its name and token with matching env vars:
+
+- `NOTION_WORKSPACE_KEYS`
+- `NOTION_WORKSPACE_<KEY>_NAME`
+- `NOTION_WORKSPACE_<KEY>_TOKEN`
+- `NOTION_WORKSPACE_<KEY>_ALIASES` (optional, comma-separated)
+
+Example:
+
+```env
+NOTION_WORKSPACE_KEYS=primary,secondary,finance
+
+NOTION_WORKSPACE_PRIMARY_NAME=Workspace A
+NOTION_WORKSPACE_PRIMARY_TOKEN=secret_primary_workspace_token
+
+NOTION_WORKSPACE_SECONDARY_NAME=Workspace B
+NOTION_WORKSPACE_SECONDARY_TOKEN=secret_secondary_workspace_token
+
+NOTION_WORKSPACE_FINANCE_NAME=Finance Ops
+NOTION_WORKSPACE_FINANCE_TOKEN=secret_finance_workspace_token
+NOTION_WORKSPACE_FINANCE_ALIASES=fin,accounting
+```
+
+The server rejects ambiguous selectors, so aliases must stay unique across all
+configured workspaces.
+
+### Legacy two-workspace compatibility
+
+Older env files still work:
 
 - `NOTION_WORKSPACE_PRIMARY_NAME`
 - `NOTION_TOKEN_PRIMARY`
 - `NOTION_WORKSPACE_SECONDARY_NAME`
 - `NOTION_TOKEN_SECONDARY`
 
-Example:
-
-```env
-NOTION_WORKSPACE_PRIMARY_NAME=Workspace A
-NOTION_TOKEN_PRIMARY=secret_primary_workspace_token
-NOTION_WORKSPACE_SECONDARY_NAME=Workspace B
-NOTION_TOKEN_SECONDARY=secret_secondary_workspace_token
-```
+If the normalized config is missing but those four legacy vars are present, the
+server maps them into `primary,secondary` automatically.
 
 ## Using It In Codex
 
@@ -87,11 +112,11 @@ Optional examples:
 ```bash
 /usr/bin/python3 scripts/smoke_test_read_side.py \
   --validate-tokens \
-  --workspace Workspace B \
+  --workspace secondary \
   --query "meeting naming convention"
 
 /usr/bin/python3 scripts/smoke_test_read_side.py \
-  --workspace "Workspace A" \
+  --workspace "Finance Ops" \
   --fetch-page "https://www.notion.so/..."
 ```
 
@@ -110,7 +135,7 @@ Optional example:
 ```bash
 /usr/bin/python3 scripts/smoke_test_stdio.py \
   --validate-tokens \
-  --workspace Workspace B \
+  --workspace fin \
   --query "meeting naming convention"
 ```
 
@@ -120,6 +145,8 @@ Optional example:
   pointed to by `NOTION_MULTI_WORKSPACE_ENV_FILE`
 - Search returns no results: make sure the integration behind that workspace
   token has access to the target pages or databases in Notion
+- `Unknown workspace ...`: run `list_workspaces` and use one of the advertised
+  keys, names, or aliases
 - The repo's default `python` or `python3` points at a broken shim: use
   `/usr/bin/python3` for both tests and local MCP runs
 

@@ -5,7 +5,7 @@
       "args": [
         "./scripts/notion_multi_workspace_server.py"
       ],
-      "note": "Read-only first pass. Configure the two Notion workspace tokens in the repo-root .env file before use."
+      "note": "Read-only first pass. Configure one or more Notion workspace tokens in the repo-root .env file before use."
     }
   }
 }
