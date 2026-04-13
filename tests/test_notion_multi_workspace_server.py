@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Optional
 
@@ -162,6 +163,62 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
         }
         self.assertEqual(simplified["Status"], "In Progress")
         self.assertEqual(simplified["Reviewers"], ["Julian Kocher", "user-2"])
+
+    def test_build_database_summary_and_query_summary(self) -> None:
+        workspace = MODULE.WorkspaceConfig("workspace-a", "Workspace A", "token-a")
+        database = {
+            "id": "db-1",
+            "title": [{"plain_text": "Project Tracker"}],
+            "url": "https://www.notion.so/db-1",
+            "created_time": "2026-04-13T00:00:00.000Z",
+            "last_edited_time": "2026-04-13T01:00:00.000Z",
+            "archived": False,
+            "in_trash": False,
+            "parent": {"type": "workspace", "workspace": True},
+            "properties": {
+                "Name": {"id": "title", "type": "title"},
+                "Status": {"id": "status", "type": "status"},
+            },
+        }
+        response = {
+            "results": [
+                {
+                    "object": "page",
+                    "id": "page-1",
+                    "url": "https://www.notion.so/page-1",
+                    "last_edited_time": "2026-04-13T02:00:00.000Z",
+                    "parent": {"type": "database_id", "database_id": "db-1"},
+                    "properties": {
+                        "Name": {"type": "title", "title": [{"plain_text": "Task A"}]},
+                        "Status": {"type": "status", "status": {"name": "Open"}},
+                    },
+                }
+            ],
+            "has_more": False,
+            "next_cursor": None,
+        }
+
+        db_summary = MODULE.build_database_summary(workspace, database)
+        query_summary = MODULE.build_database_query_summary(workspace, database, response)
+
+        self.assertEqual(db_summary["database"]["title"], "Project Tracker")
+        self.assertEqual(query_summary["count"], 1)
+        self.assertEqual(query_summary["results"][0]["title"], "Task A")
+        self.assertEqual(query_summary["results"][0]["properties"]["Status"], "Open")
+
+    def test_list_workspaces_reports_read_and_write_tool_sets(self) -> None:
+        workspace = MODULE.WorkspaceConfig("workspace-a", "Workspace A", "token-a")
+        with mock.patch.object(MODULE, "load_workspace_configs", return_value={"workspace-a": workspace}):
+            payload = MODULE.tool_list_workspaces({})
+
+        self.assertEqual(payload["read_only_tools"], [
+            "list_workspaces",
+            "search",
+            "fetch_page",
+            "fetch_database",
+            "query_database",
+        ])
+        self.assertEqual(payload["write_tools"], ["create_page", "append_block_children"])
 
     def test_render_block_markdown_handles_common_blocks(self) -> None:
         heading = {

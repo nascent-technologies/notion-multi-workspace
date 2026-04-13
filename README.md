@@ -1,19 +1,23 @@
 # Notion Multi-Workspace
 
-A small read-only MCP server for working with multiple Notion workspaces from one session.
+A small MCP server for working with multiple Notion workspaces from one session.
 
 ## Features
 
 - explicit `workspace` selection on every tool call
 - normalized multi-workspace configuration
-- read-only tool surface
-- page search and page fetch support
+- explicit read and write tool surface
+- page search, fetch, database query, page creation, and block append support
 
 ## Tools
 
 - `list_workspaces()`
 - `search(workspace, query, page_size=10, result_type="page")`
 - `fetch_page(workspace, page_id_or_url, include_content=true, block_limit=200)`
+- `fetch_database(workspace, database_id_or_url)`
+- `query_database(workspace, database_id_or_url, page_size=10, start_cursor=None, filter=None, sorts=None)`
+- `create_page(workspace, parent, properties, children=None)`
+- `append_block_children(workspace, block_id_or_url, children)`
 
 ## Configuration
 
@@ -58,6 +62,6 @@ python3 scripts/smoke_test_stdio.py
 
 ## Notes
 
-- The server is read-only.
 - Workspace aliases must be unique.
 - The integration must have access to the target Notion pages or databases.
+- Write operations use the configured workspace integration permissions.

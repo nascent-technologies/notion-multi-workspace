@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Minimal stdio MCP server for explicit multi-workspace Notion reads.
+"""Minimal stdio MCP server for explicit multi-workspace Notion access.
 
-This server is intentionally read-only and implements:
+This server implements:
 
 - list_workspaces
 - search
 - fetch_page
+- fetch_database
+- query_database
+- create_page
+- append_block_children
 
 Every Notion tool call requires an explicit workspace selector. Workspace
 configuration is normalized around a workspace key list so the server can safely
@@ -489,6 +493,52 @@ class NotionClient:
         page_id = canonicalize_notion_id(page_id_or_url)
         return self.request_json("GET", f"/pages/{page_id}")
 
+    def get_database(self, database_id_or_url: str) -> dict[str, Any]:
+        database_id = canonicalize_notion_id(database_id_or_url)
+        return self.request_json("GET", f"/databases/{database_id}")
+
+    def query_database(
+        self,
+        database_id_or_url: str,
+        page_size: int = 10,
+        start_cursor: str | None = None,
+        filter_payload: dict[str, Any] | None = None,
+        sorts: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        database_id = canonicalize_notion_id(database_id_or_url)
+        payload: dict[str, Any] = {
+            "page_size": max(1, min(page_size, 100)),
+        }
+        if start_cursor:
+            payload["start_cursor"] = start_cursor
+        if filter_payload:
+            payload["filter"] = filter_payload
+        if sorts:
+            payload["sorts"] = sorts
+        return self.request_json("POST", f"/databases/{database_id}/query", payload)
+
+    def create_page(
+        self,
+        parent: dict[str, Any],
+        properties: dict[str, Any],
+        children: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "parent": parent,
+            "properties": properties,
+        }
+        if children:
+            payload["children"] = children
+        return self.request_json("POST", "/pages", payload)
+
+    def append_block_children(
+        self,
+        block_id_or_url: str,
+        children: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        block_id = canonicalize_notion_id(block_id_or_url)
+        return self.request_json("PATCH", f"/blocks/{block_id}/children", {"children": children})
+
     def list_block_children(
         self, block_id: str, block_limit: int = 200
     ) -> list[dict[str, Any]]:
@@ -607,6 +657,69 @@ def build_page_summary(
     }
 
 
+def build_database_summary(workspace: WorkspaceConfig, database: dict[str, Any]) -> dict[str, Any]:
+    properties = database.get("properties", {})
+    simplified_properties = {
+        key: {
+            "type": value.get("type"),
+            "id": value.get("id"),
+        }
+        for key, value in properties.items()
+    }
+    return {
+        "workspace": workspace.name,
+        "workspace_key": workspace.key,
+        "database": {
+            "id": database.get("id"),
+            "title": rich_text_plain(database.get("title", [])) or "Untitled",
+            "url": database.get("url"),
+            "created_time": database.get("created_time"),
+            "last_edited_time": database.get("last_edited_time"),
+            "archived": database.get("archived"),
+            "in_trash": database.get("in_trash"),
+            "parent": format_parent(database.get("parent", {})),
+            "properties": simplified_properties,
+        },
+    }
+
+
+def build_database_query_summary(
+    workspace: WorkspaceConfig,
+    database: dict[str, Any],
+    response: dict[str, Any],
+) -> dict[str, Any]:
+    summarized_results = []
+    for result in response.get("results", []):
+        if result.get("object") != "page":
+            continue
+        summarized_results.append(
+            {
+                "id": result.get("id"),
+                "title": extract_page_title(result),
+                "url": result.get("url"),
+                "last_edited_time": result.get("last_edited_time"),
+                "parent": format_parent(result.get("parent", {})),
+                "properties": {
+                    key: simplify_property_value(value)
+                    for key, value in result.get("properties", {}).items()
+                },
+            }
+        )
+    return {
+        "workspace": workspace.name,
+        "workspace_key": workspace.key,
+        "database": {
+            "id": database.get("id"),
+            "title": rich_text_plain(database.get("title", [])) or "Untitled",
+            "url": database.get("url"),
+        },
+        "count": len(summarized_results),
+        "has_more": bool(response.get("has_more")),
+        "next_cursor": response.get("next_cursor"),
+        "results": summarized_results,
+    }
+
+
 def make_tool_text(payload: dict[str, Any]) -> dict[str, Any]:
     """Wrap a tool response as MCP text content."""
 
@@ -646,7 +759,14 @@ def tool_list_workspaces(arguments: dict[str, Any]) -> dict[str, Any]:
     return {
         "workspace_count": len(summaries),
         "workspaces": summaries,
-        "read_only_tools": ["list_workspaces", "search", "fetch_page"],
+        "read_only_tools": [
+            "list_workspaces",
+            "search",
+            "fetch_page",
+            "fetch_database",
+            "query_database",
+        ],
+        "write_tools": ["create_page", "append_block_children"],
     }
 
 
@@ -710,6 +830,82 @@ def tool_fetch_page(arguments: dict[str, Any]) -> dict[str, Any]:
         content_markdown=content_markdown,
         rendered_block_count=rendered_block_count,
     )
+
+
+def tool_fetch_database(arguments: dict[str, Any]) -> dict[str, Any]:
+    workspaces = load_workspace_configs()
+    workspace = resolve_workspace(arguments.get("workspace"), workspaces)
+    database_id_or_url = arguments.get("database_id_or_url") or arguments.get("database")
+    if not database_id_or_url:
+        raise McpProtocolError(
+            "fetch_database requires 'database_id_or_url' with a database UUID or Notion URL."
+        )
+    client = NotionClient(workspace)
+    database = client.get_database(str(database_id_or_url))
+    return build_database_summary(workspace, database)
+
+
+def tool_query_database(arguments: dict[str, Any]) -> dict[str, Any]:
+    workspaces = load_workspace_configs()
+    workspace = resolve_workspace(arguments.get("workspace"), workspaces)
+    database_id_or_url = arguments.get("database_id_or_url") or arguments.get("database")
+    if not database_id_or_url:
+        raise McpProtocolError(
+            "query_database requires 'database_id_or_url' with a database UUID or Notion URL."
+        )
+    page_size = int(arguments.get("page_size", 10))
+    filter_payload = arguments.get("filter")
+    sorts = arguments.get("sorts")
+    if filter_payload is not None and not isinstance(filter_payload, dict):
+        raise McpProtocolError("query_database 'filter' must be an object.")
+    if sorts is not None and not isinstance(sorts, list):
+        raise McpProtocolError("query_database 'sorts' must be an array.")
+    client = NotionClient(workspace)
+    database = client.get_database(str(database_id_or_url))
+    response = client.query_database(
+        database_id_or_url=str(database_id_or_url),
+        page_size=page_size,
+        start_cursor=arguments.get("start_cursor"),
+        filter_payload=filter_payload,
+        sorts=sorts,
+    )
+    return build_database_query_summary(workspace, database, response)
+
+
+def tool_create_page(arguments: dict[str, Any]) -> dict[str, Any]:
+    workspaces = load_workspace_configs()
+    workspace = resolve_workspace(arguments.get("workspace"), workspaces)
+    parent = arguments.get("parent")
+    properties = arguments.get("properties")
+    children = arguments.get("children")
+    if not isinstance(parent, dict):
+        raise McpProtocolError("create_page requires 'parent' as an object.")
+    if not isinstance(properties, dict):
+        raise McpProtocolError("create_page requires 'properties' as an object.")
+    if children is not None and not isinstance(children, list):
+        raise McpProtocolError("create_page 'children' must be an array when provided.")
+    client = NotionClient(workspace)
+    page = client.create_page(parent=parent, properties=properties, children=children)
+    return build_page_summary(workspace, page, content_markdown=None, rendered_block_count=0)
+
+
+def tool_append_block_children(arguments: dict[str, Any]) -> dict[str, Any]:
+    workspaces = load_workspace_configs()
+    workspace = resolve_workspace(arguments.get("workspace"), workspaces)
+    block_id_or_url = arguments.get("block_id_or_url") or arguments.get("page_id_or_url") or arguments.get("block")
+    children = arguments.get("children")
+    if not block_id_or_url:
+        raise McpProtocolError("append_block_children requires 'block_id_or_url'.")
+    if not isinstance(children, list) or not children:
+        raise McpProtocolError("append_block_children requires a non-empty 'children' array.")
+    client = NotionClient(workspace)
+    response = client.append_block_children(str(block_id_or_url), children)
+    return {
+        "workspace": workspace.name,
+        "workspace_key": workspace.key,
+        "appended_count": len(response.get("results", [])),
+        "results": response.get("results", []),
+    }
 
 
 TOOLS: dict[str, dict[str, Any]] = {
@@ -803,6 +999,71 @@ TOOLS: dict[str, dict[str, Any]] = {
             "additionalProperties": False,
         },
         "handler": tool_fetch_page,
+    },
+    "fetch_database": {
+        "description": "Fetch one Notion database from one configured workspace.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "workspace": {
+                    "type": "string",
+                    "description": "Workspace selector for one configured workspace or alias.",
+                },
+                "database_id_or_url": {
+                    "type": "string",
+                    "description": "The Notion database UUID or database URL to fetch.",
+                },
+            },
+            "required": ["workspace", "database_id_or_url"],
+            "additionalProperties": False,
+        },
+        "handler": tool_fetch_database,
+    },
+    "query_database": {
+        "description": "Query one Notion database in one configured workspace.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Workspace selector for one configured workspace or alias."},
+                "database_id_or_url": {"type": "string", "description": "The Notion database UUID or URL to query."},
+                "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
+                "start_cursor": {"type": "string", "description": "Optional cursor for the next query page."},
+                "filter": {"type": "object", "description": "Optional Notion database query filter object."},
+                "sorts": {"type": "array", "description": "Optional Notion database query sorts array."},
+            },
+            "required": ["workspace", "database_id_or_url"],
+            "additionalProperties": False,
+        },
+        "handler": tool_query_database,
+    },
+    "create_page": {
+        "description": "Create one Notion page in one configured workspace under an explicit parent.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Workspace selector for one configured workspace or alias."},
+                "parent": {"type": "object", "description": "Notion parent object, for example {\"page_id\": ...} or {\"database_id\": ...}."},
+                "properties": {"type": "object", "description": "Notion page properties payload."},
+                "children": {"type": "array", "description": "Optional initial child block payloads."},
+            },
+            "required": ["workspace", "parent", "properties"],
+            "additionalProperties": False,
+        },
+        "handler": tool_create_page,
+    },
+    "append_block_children": {
+        "description": "Append child blocks to one page or block in one configured workspace.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Workspace selector for one configured workspace or alias."},
+                "block_id_or_url": {"type": "string", "description": "The Notion block or page UUID/URL to append children to."},
+                "children": {"type": "array", "description": "Child blocks to append."},
+            },
+            "required": ["workspace", "block_id_or_url", "children"],
+            "additionalProperties": False,
+        },
+        "handler": tool_append_block_children,
     },
 }
 
