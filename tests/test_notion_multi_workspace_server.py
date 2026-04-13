@@ -28,10 +28,6 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
         tracked = {
             MODULE.WORKSPACE_KEYS_ENV_VAR,
             MODULE.DOTENV_ENV_VAR,
-            "NOTION_WORKSPACE_PRIMARY_NAME",
-            "NOTION_TOKEN_PRIMARY",
-            "NOTION_WORKSPACE_SECONDARY_NAME",
-            "NOTION_TOKEN_SECONDARY",
         }
         for key in ("primary", "secondary", "finance"):
             tracked.add(MODULE.workspace_name_env_var(key))
@@ -88,24 +84,6 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
             self.assertEqual(configs["primary"].name, "Workspace A")
             self.assertEqual(configs["secondary"].token, "secret_secondary")
             self.assertEqual(configs["finance"].extra_aliases, ("fin", "acct"))
-        finally:
-            self.restore_env(previous)
-
-    def test_load_workspace_configs_supports_legacy_two_workspace_env(self) -> None:
-        previous = self.env_snapshot()
-        try:
-            for name in previous:
-                os.environ.pop(name, None)
-            os.environ["NOTION_WORKSPACE_PRIMARY_NAME"] = "Workspace A"
-            os.environ["NOTION_TOKEN_PRIMARY"] = "secret_primary"
-            os.environ["NOTION_WORKSPACE_SECONDARY_NAME"] = "Workspace B"
-            os.environ["NOTION_TOKEN_SECONDARY"] = "secret_secondary"
-
-            configs = MODULE.load_workspace_configs()
-
-            self.assertEqual(os.environ[MODULE.WORKSPACE_KEYS_ENV_VAR], "primary,secondary")
-            self.assertEqual(configs["primary"].name, "Workspace A")
-            self.assertEqual(configs["secondary"].token, "secret_secondary")
         finally:
             self.restore_env(previous)
 

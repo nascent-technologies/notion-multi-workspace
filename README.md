@@ -52,33 +52,21 @@ each key, define its name and token with matching env vars:
 Example:
 
 ```env
-NOTION_WORKSPACE_KEYS=primary,secondary,finance
+NOTION_WORKSPACE_KEYS=workspace-a,workspace-b,workspace-c
 
-NOTION_WORKSPACE_PRIMARY_NAME=Workspace A
-NOTION_WORKSPACE_PRIMARY_TOKEN=secret_primary_workspace_token
+NOTION_WORKSPACE_NOBLE_NAME=Workspace A
+NOTION_WORKSPACE_NOBLE_TOKEN=secret_workspace-a_workspace_token
 
-NOTION_WORKSPACE_SECONDARY_NAME=Workspace B
-NOTION_WORKSPACE_SECONDARY_TOKEN=secret_secondary_workspace_token
+NOTION_WORKSPACE_SQUIDFORM_NAME=Workspace B
+NOTION_WORKSPACE_SQUIDFORM_TOKEN=secret_workspace-b_workspace_token
 
-NOTION_WORKSPACE_FINANCE_NAME=Finance Ops
-NOTION_WORKSPACE_FINANCE_TOKEN=secret_finance_workspace_token
-NOTION_WORKSPACE_FINANCE_ALIASES=fin,accounting
+NOTION_WORKSPACE_DIGITAL_PRIME_NAME=Workspace C
+NOTION_WORKSPACE_DIGITAL_PRIME_TOKEN=secret_digital_prime_workspace_token
+NOTION_WORKSPACE_DIGITAL_PRIME_ALIASES=dp,workspacec
 ```
 
 The server rejects ambiguous selectors, so aliases must stay unique across all
 configured workspaces.
-
-### Legacy two-workspace compatibility
-
-Older env files still work:
-
-- `NOTION_WORKSPACE_PRIMARY_NAME`
-- `NOTION_TOKEN_PRIMARY`
-- `NOTION_WORKSPACE_SECONDARY_NAME`
-- `NOTION_TOKEN_SECONDARY`
-
-If the normalized config is missing but those four legacy vars are present, the
-server maps them into `primary,secondary` automatically.
 
 ## Using It In Codex
 

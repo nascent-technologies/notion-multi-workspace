@@ -33,7 +33,6 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 DOTENV_ENV_VAR = "NOTION_MULTI_WORKSPACE_ENV_FILE"
 DOTENV_PATH = PLUGIN_ROOT / ".env"
 WORKSPACE_KEYS_ENV_VAR = "NOTION_WORKSPACE_KEYS"
-LEGACY_WORKSPACE_SLOTS = ("PRIMARY", "SECONDARY")
 UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}"
 )
@@ -156,42 +155,16 @@ def split_aliases(raw_value: str | None) -> tuple[str, ...]:
     return tuple(aliases)
 
 
-def maybe_seed_legacy_workspace_env() -> None:
-    """Map the old PRIMARY/SECONDARY env shape into the normalized config once."""
-
-    if os.getenv(WORKSPACE_KEYS_ENV_VAR):
-        return
-
-    legacy_pairs: list[tuple[str, str, str]] = []
-    for slot in LEGACY_WORKSPACE_SLOTS:
-        name = os.getenv(f"NOTION_WORKSPACE_{slot}_NAME")
-        token = os.getenv(f"NOTION_TOKEN_{slot}")
-        if name and token:
-            legacy_pairs.append((slot.lower(), name, token))
-
-    if not legacy_pairs:
-        return
-
-    os.environ.setdefault(
-        WORKSPACE_KEYS_ENV_VAR,
-        ",".join(key for key, _, _ in legacy_pairs),
-    )
-    for key, name, token in legacy_pairs:
-        os.environ.setdefault(workspace_name_env_var(key), name)
-        os.environ.setdefault(workspace_token_env_var(key), token)
-
-
 def load_workspace_configs() -> dict[str, WorkspaceConfig]:
     """Load all configured workspace bindings from the normalized env model."""
 
     load_dotenv(resolve_dotenv_path())
-    maybe_seed_legacy_workspace_env()
 
     raw_keys = os.getenv(WORKSPACE_KEYS_ENV_VAR)
     if not raw_keys:
         raise ConfigError(
             "Missing environment variable NOTION_WORKSPACE_KEYS. "
-            "Set it to a comma-separated list such as 'primary,secondary'."
+            "Set it to a comma-separated list such as 'workspace-a,workspace-b,workspace-c'."
         )
 
     workspace_keys = parse_workspace_keys(raw_keys)
