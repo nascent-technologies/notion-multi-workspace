@@ -16,7 +16,7 @@ workspaces in the same session.
 - If the user says "Notion" without naming the workspace and the action is a
   write, ask which workspace to target.
 - Prefer `list_workspaces` first when the available selectors are unclear.
-- Prefer workspace keys/names that reflect the real org identity, not generic labels.
+- Prefer clear stable workspace keys and require the user to name the target workspace when there is any ambiguity.
 
 ## Current Tools
 

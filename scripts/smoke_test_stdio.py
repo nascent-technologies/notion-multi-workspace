@@ -133,10 +133,10 @@ def ensure_smoke_env() -> tempfile.TemporaryDirectory[str] | None:
         "\n".join(
             [
                 "NOTION_WORKSPACE_KEYS=workspace-a,workspace-b",
-                "NOTION_WORKSPACE_NOBLE_NAME=Workspace A",
-                "NOTION_WORKSPACE_NOBLE_TOKEN=secret_workspace-a_workspace_token",
-                "NOTION_WORKSPACE_SQUIDFORM_NAME=Workspace B",
-                "NOTION_WORKSPACE_SQUIDFORM_TOKEN=secret_workspace-b_workspace_token",
+                "NOTION_WORKSPACE_WORKSPACE_A_NAME=Workspace A",
+                "NOTION_WORKSPACE_WORKSPACE_A_TOKEN=secret_workspace_a_token",
+                "NOTION_WORKSPACE_WORKSPACE_B_NAME=Workspace B",
+                "NOTION_WORKSPACE_WORKSPACE_B_TOKEN=secret_workspace_b_token",
             ]
         )
         + "\n"

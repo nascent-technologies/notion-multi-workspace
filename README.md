@@ -54,15 +54,15 @@ Example:
 ```env
 NOTION_WORKSPACE_KEYS=workspace-a,workspace-b,workspace-c
 
-NOTION_WORKSPACE_NOBLE_NAME=Workspace A
-NOTION_WORKSPACE_NOBLE_TOKEN=secret_workspace-a_workspace_token
+NOTION_WORKSPACE_WORKSPACE_A_NAME=Workspace A
+NOTION_WORKSPACE_WORKSPACE_A_TOKEN=secret_workspace_a_token
 
-NOTION_WORKSPACE_SQUIDFORM_NAME=Workspace B
-NOTION_WORKSPACE_SQUIDFORM_TOKEN=secret_workspace-b_workspace_token
+NOTION_WORKSPACE_WORKSPACE_B_NAME=Workspace B
+NOTION_WORKSPACE_WORKSPACE_B_TOKEN=secret_workspace_b_token
 
-NOTION_WORKSPACE_DIGITAL_PRIME_NAME=Workspace C
-NOTION_WORKSPACE_DIGITAL_PRIME_TOKEN=secret_digital_prime_workspace_token
-NOTION_WORKSPACE_DIGITAL_PRIME_ALIASES=dp,workspacec
+NOTION_WORKSPACE_WORKSPACE_C_NAME=Workspace C
+NOTION_WORKSPACE_WORKSPACE_C_TOKEN=secret_workspace_c_token
+NOTION_WORKSPACE_WORKSPACE_C_ALIASES=wksp-c,team-c
 ```
 
 The server rejects ambiguous selectors, so aliases must stay unique across all
@@ -84,7 +84,7 @@ Before publishing publicly:
 - [x] unit tests passing
 - [x] direct read-side smoke test passing
 - [x] stdio MCP smoke test passing
-- [ ] real token validation against intended workspaces
+- [x] real token validation against intended workspaces
 - [x] README examples reflect the intended public naming and setup
 - [ ] push tagged release / publish repo updates
 
@@ -115,7 +115,7 @@ Optional examples:
 /usr/bin/python3 scripts/smoke_test_read_side.py \
   --validate-tokens \
   --workspace workspace-b \
-  --query "meeting naming convention"
+  --query "engineering notes"
 
 /usr/bin/python3 scripts/smoke_test_read_side.py \
   --workspace "Workspace C" \
@@ -138,7 +138,7 @@ Optional example:
 /usr/bin/python3 scripts/smoke_test_stdio.py \
   --validate-tokens \
   --workspace workspace-c \
-  --query "meeting naming convention"
+  --query "engineering notes"
 ```
 
 ## Troubleshooting

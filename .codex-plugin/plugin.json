@@ -32,8 +32,8 @@
     "termsOfServiceURL": "https://www.notion.so/legal/terms-of-use",
     "defaultPrompt": [
       "List the configured Notion workspaces.",
-      "Search Workspace A for margin call notes.",
-      "Fetch the matching Workspace C page."
+      "Search Workspace A for engineering notes.",
+      "Fetch the matching Workspace B page."
     ],
     "brandColor": "#111111"
   }

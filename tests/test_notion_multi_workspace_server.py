@@ -29,7 +29,7 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
             MODULE.WORKSPACE_KEYS_ENV_VAR,
             MODULE.DOTENV_ENV_VAR,
         }
-        for key in ("primary", "secondary", "finance", "workspace-c"):
+        for key in ("workspace-a", "workspace-b", "workspace-c", "team-space"):
             tracked.add(MODULE.workspace_name_env_var(key))
             tracked.add(MODULE.workspace_token_env_var(key))
             tracked.add(MODULE.workspace_aliases_env_var(key))
@@ -38,19 +38,19 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
     def test_list_workspaces_returns_all_configured_bindings(self) -> None:
         previous = self.env_snapshot()
         try:
-            os.environ[MODULE.WORKSPACE_KEYS_ENV_VAR] = "primary,secondary,finance"
-            os.environ[MODULE.workspace_name_env_var("primary")] = "Workspace A"
-            os.environ[MODULE.workspace_token_env_var("primary")] = "secret_primary"
-            os.environ[MODULE.workspace_name_env_var("secondary")] = "Workspace B"
-            os.environ[MODULE.workspace_token_env_var("secondary")] = "secret_secondary"
-            os.environ[MODULE.workspace_name_env_var("finance")] = "Finance Ops"
-            os.environ[MODULE.workspace_token_env_var("finance")] = "secret_finance"
-            os.environ[MODULE.workspace_aliases_env_var("finance")] = "fin,accounting"
+            os.environ[MODULE.WORKSPACE_KEYS_ENV_VAR] = "workspace-a,workspace-b,workspace-c"
+            os.environ[MODULE.workspace_name_env_var("workspace-a")] = "Workspace A"
+            os.environ[MODULE.workspace_token_env_var("workspace-a")] = "secret_a"
+            os.environ[MODULE.workspace_name_env_var("workspace-b")] = "Workspace B"
+            os.environ[MODULE.workspace_token_env_var("workspace-b")] = "secret_b"
+            os.environ[MODULE.workspace_name_env_var("workspace-c")] = "Workspace C"
+            os.environ[MODULE.workspace_token_env_var("workspace-c")] = "secret_c"
+            os.environ[MODULE.workspace_aliases_env_var("workspace-c")] = "team-c,ops-c"
 
             payload = MODULE.tool_list_workspaces({"validate_tokens": False})
             self.assertEqual(payload["workspace_count"], 3)
-            self.assertEqual([item["key"] for item in payload["workspaces"]], ["primary", "secondary", "finance"])
-            self.assertIn("accounting", payload["workspaces"][2]["aliases"])
+            self.assertEqual([item["key"] for item in payload["workspaces"]], ["workspace-a", "workspace-b", "workspace-c"])
+            self.assertIn("ops-c", payload["workspaces"][2]["aliases"])
         finally:
             self.restore_env(previous)
 
@@ -65,14 +65,14 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
                 env_path.write_text(
                     "\n".join(
                         [
-                            "NOTION_WORKSPACE_KEYS=primary,secondary,finance",
-                            "NOTION_WORKSPACE_PRIMARY_NAME=Workspace A",
-                            "NOTION_WORKSPACE_PRIMARY_TOKEN=secret_primary",
-                            "NOTION_WORKSPACE_SECONDARY_NAME=Workspace B",
-                            "NOTION_WORKSPACE_SECONDARY_TOKEN=secret_secondary",
-                            "NOTION_WORKSPACE_FINANCE_NAME=Finance Ops",
-                            "NOTION_WORKSPACE_FINANCE_TOKEN=secret_finance",
-                            "NOTION_WORKSPACE_FINANCE_ALIASES=fin,acct",
+                            "NOTION_WORKSPACE_KEYS=workspace-a,workspace-b,workspace-c",
+                            "NOTION_WORKSPACE_WORKSPACE_A_NAME=Workspace A",
+                            "NOTION_WORKSPACE_WORKSPACE_A_TOKEN=secret_a",
+                            "NOTION_WORKSPACE_WORKSPACE_B_NAME=Workspace B",
+                            "NOTION_WORKSPACE_WORKSPACE_B_TOKEN=secret_b",
+                            "NOTION_WORKSPACE_WORKSPACE_C_NAME=Workspace C",
+                            "NOTION_WORKSPACE_WORKSPACE_C_TOKEN=secret_c",
+                            "NOTION_WORKSPACE_WORKSPACE_C_ALIASES=team-c,ops-c",
                         ]
                     )
                     + "\n"
@@ -81,24 +81,24 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
 
                 configs = MODULE.load_workspace_configs()
 
-            self.assertEqual(configs["primary"].name, "Workspace A")
-            self.assertEqual(configs["secondary"].token, "secret_secondary")
-            self.assertEqual(configs["finance"].extra_aliases, ("fin", "acct"))
+            self.assertEqual(configs["workspace-a"].name, "Workspace A")
+            self.assertEqual(configs["workspace-b"].token, "secret_b")
+            self.assertEqual(configs["workspace-c"].extra_aliases, ("team-c", "ops-c"))
         finally:
             self.restore_env(previous)
 
     def test_hyphenated_workspace_keys_map_to_underscore_env_vars(self) -> None:
         self.assertEqual(
-            MODULE.workspace_name_env_var("workspace-c"),
-            "NOTION_WORKSPACE_DIGITAL_PRIME_NAME",
+            MODULE.workspace_name_env_var("team-space"),
+            "NOTION_WORKSPACE_TEAM_SPACE_NAME",
         )
         self.assertEqual(
-            MODULE.workspace_token_env_var("workspace-c"),
-            "NOTION_WORKSPACE_DIGITAL_PRIME_TOKEN",
+            MODULE.workspace_token_env_var("team-space"),
+            "NOTION_WORKSPACE_TEAM_SPACE_TOKEN",
         )
         self.assertEqual(
-            MODULE.workspace_aliases_env_var("workspace-c"),
-            "NOTION_WORKSPACE_DIGITAL_PRIME_ALIASES",
+            MODULE.workspace_aliases_env_var("team-space"),
+            "NOTION_WORKSPACE_TEAM_SPACE_ALIASES",
         )
 
     def test_canonicalize_notion_id_from_raw_and_url(self) -> None:
@@ -111,26 +111,26 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
 
     def test_resolve_workspace_matches_key_name_and_aliases(self) -> None:
         workspaces = {
-            "primary": MODULE.WorkspaceConfig("primary", "Workspace A", "token-a"),
-            "secondary": MODULE.WorkspaceConfig("secondary", "Workspace B", "token-b"),
-            "finance": MODULE.WorkspaceConfig("finance", "Finance Ops", "token-c", ("fin", "accounting")),
+            "workspace-a": MODULE.WorkspaceConfig("workspace-a", "Workspace A", "token-a"),
+            "workspace-b": MODULE.WorkspaceConfig("workspace-b", "Workspace B", "token-b"),
+            "workspace-c": MODULE.WorkspaceConfig("workspace-c", "Workspace C", "token-c", ("team-c", "ops-c")),
         }
 
-        self.assertEqual(MODULE.resolve_workspace("primary", workspaces).name, "Workspace A")
-        self.assertEqual(MODULE.resolve_workspace("workspace-a", workspaces).key, "primary")
-        self.assertEqual(MODULE.resolve_workspace("Workspace B", workspaces).key, "secondary")
-        self.assertEqual(MODULE.resolve_workspace("accounting", workspaces).key, "finance")
+        self.assertEqual(MODULE.resolve_workspace("workspace-a", workspaces).name, "Workspace A")
+        self.assertEqual(MODULE.resolve_workspace("workspace-a", workspaces).key, "workspace-a")
+        self.assertEqual(MODULE.resolve_workspace("Workspace B", workspaces).key, "workspace-b")
+        self.assertEqual(MODULE.resolve_workspace("ops-c", workspaces).key, "workspace-c")
 
     def test_load_workspace_configs_rejects_ambiguous_aliases(self) -> None:
         previous = self.env_snapshot()
         try:
-            os.environ[MODULE.WORKSPACE_KEYS_ENV_VAR] = "primary,secondary"
-            os.environ[MODULE.workspace_name_env_var("primary")] = "Workspace A"
-            os.environ[MODULE.workspace_token_env_var("primary")] = "secret_primary"
-            os.environ[MODULE.workspace_aliases_env_var("primary")] = "shared"
-            os.environ[MODULE.workspace_name_env_var("secondary")] = "Workspace B"
-            os.environ[MODULE.workspace_token_env_var("secondary")] = "secret_secondary"
-            os.environ[MODULE.workspace_aliases_env_var("secondary")] = "shared"
+            os.environ[MODULE.WORKSPACE_KEYS_ENV_VAR] = "workspace-a,workspace-b"
+            os.environ[MODULE.workspace_name_env_var("workspace-a")] = "Workspace A"
+            os.environ[MODULE.workspace_token_env_var("workspace-a")] = "secret_a"
+            os.environ[MODULE.workspace_aliases_env_var("workspace-a")] = "shared"
+            os.environ[MODULE.workspace_name_env_var("workspace-b")] = "Workspace B"
+            os.environ[MODULE.workspace_token_env_var("workspace-b")] = "secret_b"
+            os.environ[MODULE.workspace_aliases_env_var("workspace-b")] = "shared"
 
             with self.assertRaises(MODULE.ConfigError):
                 MODULE.load_workspace_configs()
