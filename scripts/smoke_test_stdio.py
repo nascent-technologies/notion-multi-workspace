@@ -14,7 +14,7 @@ from typing import Any
 
 
 SERVER_PATH = Path(__file__).resolve().parent / "notion_multi_workspace_server.py"
-SYSTEM_PYTHON = Path("/usr/bin/python3")
+SYSTEM_PYTHON = Path(sys.executable or "python3")
 
 
 def default_workspace() -> str:
