@@ -29,7 +29,7 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
             MODULE.WORKSPACE_KEYS_ENV_VAR,
             MODULE.DOTENV_ENV_VAR,
         }
-        for key in ("primary", "secondary", "finance"):
+        for key in ("primary", "secondary", "finance", "workspace-c"):
             tracked.add(MODULE.workspace_name_env_var(key))
             tracked.add(MODULE.workspace_token_env_var(key))
             tracked.add(MODULE.workspace_aliases_env_var(key))
@@ -86,6 +86,20 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
             self.assertEqual(configs["finance"].extra_aliases, ("fin", "acct"))
         finally:
             self.restore_env(previous)
+
+    def test_hyphenated_workspace_keys_map_to_underscore_env_vars(self) -> None:
+        self.assertEqual(
+            MODULE.workspace_name_env_var("workspace-c"),
+            "NOTION_WORKSPACE_DIGITAL_PRIME_NAME",
+        )
+        self.assertEqual(
+            MODULE.workspace_token_env_var("workspace-c"),
+            "NOTION_WORKSPACE_DIGITAL_PRIME_TOKEN",
+        )
+        self.assertEqual(
+            MODULE.workspace_aliases_env_var("workspace-c"),
+            "NOTION_WORKSPACE_DIGITAL_PRIME_ALIASES",
+        )
 
     def test_canonicalize_notion_id_from_raw_and_url(self) -> None:
         raw_id = "33daa70e43f1801c8441e88c36e22608"

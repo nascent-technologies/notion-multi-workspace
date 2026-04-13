@@ -126,16 +126,20 @@ def parse_workspace_keys(raw_value: str) -> list[str]:
     return keys
 
 
+def env_key_fragment(key: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", "_", key.upper())
+
+
 def workspace_name_env_var(key: str) -> str:
-    return f"NOTION_WORKSPACE_{key.upper()}_NAME"
+    return f"NOTION_WORKSPACE_{env_key_fragment(key)}_NAME"
 
 
 def workspace_token_env_var(key: str) -> str:
-    return f"NOTION_WORKSPACE_{key.upper()}_TOKEN"
+    return f"NOTION_WORKSPACE_{env_key_fragment(key)}_TOKEN"
 
 
 def workspace_aliases_env_var(key: str) -> str:
-    return f"NOTION_WORKSPACE_{key.upper()}_ALIASES"
+    return f"NOTION_WORKSPACE_{env_key_fragment(key)}_ALIASES"
 
 
 def split_aliases(raw_value: str | None) -> tuple[str, ...]:
