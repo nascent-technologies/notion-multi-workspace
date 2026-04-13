@@ -121,7 +121,7 @@ def parse_workspace_keys(raw_value: str) -> list[str]:
         keys.append(candidate)
     if not keys:
         raise ConfigError(
-            f"{WORKSPACE_KEYS_ENV_VAR} must list at least one workspace key, for example: workspace-a,workspace-b"
+            f"{WORKSPACE_KEYS_ENV_VAR} must list at least one workspace key."
         )
     return keys
 
@@ -168,7 +168,7 @@ def load_workspace_configs() -> dict[str, WorkspaceConfig]:
     if not raw_keys:
         raise ConfigError(
             "Missing environment variable NOTION_WORKSPACE_KEYS. "
-            "Set it to a comma-separated list such as 'workspace-a,workspace-b,workspace-c'."
+            "Set it to a comma-separated list of workspace keys."
         )
 
     workspace_keys = parse_workspace_keys(raw_keys)
@@ -742,7 +742,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                 "workspace": {
                     "type": "string",
                     "description": (
-                        "Workspace selector such as workspace-a, workspace-b, Workspace C, or an allowed alias."
+                        "Workspace selector for one configured workspace or alias."
                     ),
                 },
                 "query": {
@@ -781,7 +781,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                 "workspace": {
                     "type": "string",
                     "description": (
-                        "Workspace selector such as workspace-a, workspace-b, Workspace C, or an allowed alias."
+                        "Workspace selector for one configured workspace or alias."
                     ),
                 },
                 "page_id_or_url": {

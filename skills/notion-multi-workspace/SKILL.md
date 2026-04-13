@@ -1,31 +1,20 @@
 ---
 name: notion-multi-workspace
-description: Use the custom multi-Notion MCP server to search and fetch content across explicitly selected named workspaces from one Codex session.
+description: Use the multi-workspace Notion MCP server to search and fetch content from explicitly selected workspaces.
 ---
 
 # Notion Multi-Workspace
 
-Use this plugin when the user needs access to multiple separate Notion
-workspaces in the same session.
+Use this plugin when the user needs to read from multiple Notion workspaces in the same session.
 
 ## Rules
 
 - Always require an explicit `workspace` argument on every tool call.
-- Treat workspace selection as mandatory before any future write action.
-- Do not infer that a teamspace in one workspace exists in another.
-- If the user says "Notion" without naming the workspace and the action is a
-  write, ask which workspace to target.
-- Prefer `list_workspaces` first when the available selectors are unclear.
-- Prefer clear stable workspace keys and require the user to name the target workspace when there is any ambiguity.
+- Do not infer that a page or teamspace in one workspace exists in another.
+- If the target workspace is unclear, use `list_workspaces` first.
 
 ## Current Tools
 
 - `list_workspaces`
 - `search`
 - `fetch_page`
-
-## Implementation Note
-
-The current server is read-only by design. Use the bundled tools for
-cross-workspace discovery and page retrieval first. Only add writes after real
-workspace validation proves the routing rules are trustworthy.

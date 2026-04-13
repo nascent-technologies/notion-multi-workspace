@@ -1,11 +1,10 @@
 {
   "mcpServers": {
     "notion-multi-workspace": {
-      "command": "/usr/bin/python3",
+      "command": "python3",
       "args": [
         "./scripts/notion_multi_workspace_server.py"
-      ],
-      "note": "Read-only first pass. Configure one or more Notion workspace tokens in the repo-root .env file before use."
+      ]
     }
   }
 }

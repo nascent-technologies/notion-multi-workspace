@@ -1,7 +1,7 @@
 {
   "name": "notion-multi-workspace",
   "version": "0.3.0",
-  "description": "Read-only Codex plugin for routing Notion discovery across explicitly named workspaces through a local MCP server.",
+  "description": "Read-only plugin for routing Notion reads across explicitly selected workspaces.",
   "author": {
     "name": "nascent-technologies",
     "url": "https://github.com/nascent-technologies"
@@ -19,8 +19,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Notion Multi-Workspace",
-    "shortDescription": "Route Notion reads across explicitly selected workspaces.",
-    "longDescription": "Local MCP-backed read-only plugin for a multi-Notion workflow where every tool call is explicitly routed to one configured workspace to avoid reading from the wrong org.",
+    "shortDescription": "Search and fetch pages across explicitly selected Notion workspaces.",
+    "longDescription": "Read-only multi-workspace Notion access with explicit workspace routing on every tool call.",
     "developerName": "nascent-technologies",
     "category": "Productivity",
     "capabilities": [
@@ -33,7 +33,7 @@
     "defaultPrompt": [
       "List the configured Notion workspaces.",
       "Search Workspace A for engineering notes.",
-      "Fetch the matching Workspace B page."
+      "Fetch a page from Workspace B."
     ],
     "brandColor": "#111111"
   }
