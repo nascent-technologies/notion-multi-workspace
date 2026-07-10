@@ -3,24 +3,24 @@
 ## Context
 
 The current repo is a strong prototype for one narrow job: route Notion reads
-and basic writes across two explicit workspace slots without accidentally
+and basic writes across explicitly selected workspace keys without accidentally
 writing to the wrong org.
 
 Today it can:
 
-- validate two configured workspace connections
+- validate dynamically configured workspace connections from `NOTION_WORKSPACE_KEYS`
 - search pages and fetch pages/databases
 - query databases
 - create pages
 - append blocks
 - optionally support a later OAuth-based connect flow
 
-That is enough for a safe dual-workspace MCP bridge, but it is not yet the
-full product surface of a multi-Notion connection product.
+That is enough for a safe local multi-workspace MCP bridge, but it is not yet
+the full product surface of a multi-Notion connection product.
 
 ## Objective
 
-Expand the repo from a dual-slot integration helper into a reusable multi-Notion
+Expand the repo from a local integration helper into a reusable multi-Notion
 platform that can:
 
 - connect many Notion workspaces safely
@@ -41,14 +41,14 @@ platform that can:
 The current implementation is best described as:
 
 - one local MCP server
-- two hardcoded workspace slots: `primary` and `secondary`
+- normalized env-based workspace keys via `NOTION_WORKSPACE_KEYS`
 - explicit workspace selection on every operation
 - compact read and write primitives
 - local env-based credential storage
 
-That shape is good for safety, but it will not scale cleanly to a broader
-multi-workspace product because the connection model, tool registry, and config
-storage are still built around exactly two slots.
+That shape is good for safety and already avoids fixed two-slot routing, but it
+still needs product-grade connection management, capability reporting, and
+workflow surfaces before it becomes a broader multi-workspace product.
 
 ## Full Product Surface
 
@@ -154,15 +154,18 @@ To feel complete, the product should also improve how people discover and use it
 
 ## Product Requirements
 
-### R1. Multi-Connection Support
+### R1. Productized Multi-Connection Support
 
-The system must support more than two connected Notion workspaces.
+The system must preserve dynamic multi-workspace support and make connection
+management understandable for day-to-day operators.
 
 Acceptance criteria:
 
-- users can register at least 5 workspaces without changing code
+- users can configure at least 5 workspaces without changing code
 - each workspace has a stable internal ID and human-readable label
 - tools can target any registered workspace explicitly
+- validation output explains missing credentials, ambiguous aliases, and
+  permission gaps clearly
 
 ### R2. Safe Targeting
 
@@ -211,8 +214,8 @@ Acceptance criteria:
 ## M1. Complete The Single-Workspace Operator Surface
 
 Goal:
-Make the current dual-slot system feel operationally complete before broadening
-the connection model.
+Make the current dynamic multi-workspace server feel operationally complete
+before adding higher-risk cross-workspace write flows.
 
 Scope:
 
@@ -228,22 +231,27 @@ Why first:
 - it closes the most obvious product gap in the current build
 - it creates the primitive set needed for later copy/sync workflows
 
-## M2. Replace Fixed Slots With A Workspace Registry
+## M2. Productize The Workspace Registry
 
 Goal:
-Move from `primary`/`secondary` hardcoding to a dynamic workspace registry.
+Turn the existing `NOTION_WORKSPACE_KEYS` configuration model into an operator-
+legible connection registry.
 
 Scope:
 
-- replace `WORKSPACE_KEYS = ("primary", "secondary")`
-- move connection storage to a registry model
-- support add/remove/list/rename flows
+- formalize registry metadata such as display name, auth mode, aliases, and
+  validation status
+- add connection-management flows for list, validate, add, remove, and rename
 - preserve aliases and explicit targeting
+- keep credential storage local until a safer product-grade storage model is
+  selected
 
 Why second:
 
-- the current architecture does not scale to the intended product
-- cross-workspace workflows become awkward if connections are still hardcoded
+- dynamic workspace keys already exist, but operators still need clearer
+  connection lifecycle management
+- cross-workspace workflows become risky if connection health and identity are
+  hard to inspect
 
 ## M3. Add Cross-Workspace Read Flows
 
