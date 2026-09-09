@@ -735,7 +735,8 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
         self.assertEqual(
             [req.get_method() for req in opener.requests], ["POST", "POST"]
         )
-        for req, body in zip(opener.requests, opener.bodies, strict=True):
+        self.assertEqual(len(opener.requests), len(opener.bodies))
+        for req, body in zip(opener.requests, opener.bodies):
             headers = dict(req.header_items())
             self.assertEqual(headers["Authorization"], "Bearer token-under-test")
             self.assertEqual(
@@ -1409,6 +1410,7 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
         self.assertIn(
             "python3 tests/test_notion_multi_workspace_server.py", readme
         )
+        self.assertIn("Python 3.9 or newer", readme)
         self.assertNotIn(
             "python3 -m unittest tests/test_notion_multi_workspace_server.py",
             readme,

@@ -86,7 +86,7 @@ exact `after_block` object.
 1. Copy `.env.example` to `.env`
 2. Add valid Notion integration tokens
 3. Leave `NOTION_UPLOAD_ROOTS` empty unless local upload access is needed
-4. Run the server with Python 3
+4. Run the server with Python 3.9 or newer
 
 ## Verification
 
