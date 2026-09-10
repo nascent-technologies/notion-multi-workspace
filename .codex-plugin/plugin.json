@@ -1,7 +1,7 @@
 {
   "name": "notion-multi-workspace",
-  "version": "0.3.0",
-  "description": "Read-only plugin for routing Notion reads across explicitly selected workspaces.",
+  "version": "0.4.0",
+  "description": "Read and write across explicitly selected Notion workspaces, with fail-closed local uploads.",
   "author": {
     "name": "nascent-technologies",
     "url": "https://github.com/nascent-technologies"
@@ -19,13 +19,14 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Notion Multi-Workspace",
-    "shortDescription": "Search and fetch pages across explicitly selected Notion workspaces.",
-    "longDescription": "Read-only multi-workspace Notion access with explicit workspace routing on every tool call.",
+    "shortDescription": "Read and write in explicitly selected Notion workspaces.",
+    "longDescription": "Interactive multi-workspace Notion access with explicit routing on every call and fail-closed local file uploads.",
     "developerName": "nascent-technologies",
     "category": "Productivity",
     "capabilities": [
       "Interactive",
-      "Read"
+      "Read",
+      "Write"
     ],
     "websiteURL": "https://www.notion.so/",
     "privacyPolicyURL": "https://www.notion.com/help/privacy",
@@ -33,7 +34,8 @@
     "defaultPrompt": [
       "List the configured Notion workspaces.",
       "Search Workspace A for engineering notes.",
-      "Fetch a page from Workspace B."
+      "Fetch a page from Workspace B.",
+      "Upload an approved local file from a configured upload root."
     ],
     "brandColor": "#111111"
   }
