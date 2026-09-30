@@ -75,7 +75,7 @@ This is a local stdio integration. A public GitHub repository or installed local
 | Tool | Arguments and behavior |
 | --- | --- |
 | `list_workspaces` | `validate_tokens=false`; lists configured selectors. Setting it to `true` performs a live token-health read for each workspace. |
-| `search` | `workspace`, nonempty `query`, `page_size=10`, `result_type="page"`, optional `start_cursor`. Types: `page`, `database`, `all`. |
+| `search` | `workspace`, nonempty title `query`, `page_size=10`, `result_type="page"`, optional `start_cursor`. Types: `page`, `database`, `all`. |
 | `fetch_page` | `workspace`, `page_id_or_url`, `include_content=true`, `block_limit=200` (maximum 500). |
 | `fetch_database` | `workspace`, `database_id_or_url`. Returns compact database metadata. |
 | `query_database` | `workspace`, `database_id_or_url`, `page_size=10`, optional `start_cursor`, `filter`, `sorts`. |
@@ -86,7 +86,9 @@ MCP tool annotations describe reads and writes; they are hints for clients, not 
 
 ## Completeness and failure handling
 
-Search and database queries return `has_more`, `next_cursor`, and `collection` status. Pass the next cursor with the same query and workspace to continue. A response starting from a cursor describes a suffix of the results; reaching its end does not make that response the full collection. Search uses Notion's title-search endpoint, not a full-text content index or exhaustive workspace inventory.
+Search and database queries return `has_more`, `next_cursor`, and `collection` status. Pass the next cursor with the same query and workspace to continue. `collection.complete` means that a response from the start exhausted upstream pagination without a reported status problem. A response starting from a cursor describes a suffix of the results; reaching its end does not make that response the full collection. Search preserves optional upstream `request_status`; an explicit incomplete or malformed status makes `collection.complete` false, even when `has_more` is false. A missing status retains compatibility with the pinned API version.
+
+Notion documents its [search endpoint](https://developers.notion.com/reference/post-search) as matching page and database titles that include the query. The server forwards the query unchanged and retains all upstream results without local title filtering. Upstream results may include nonliteral title matches; evaluate their relevance before drawing conclusions. Search is subject to [indexing delays and non-exhaustive results](https://developers.notion.com/reference/search-optimizations-and-limitations), so pagination exhaustion does not establish an exhaustive workspace inventory. Empty results do not prove that a page or database is absent. Search does not index full page content.
 
 Page responses include `content_status`: whether content was requested, whether collection completed, whether it was truncated, truncation reasons, and rendering warnings. A block budget can omit nested descendants or remaining siblings. Increasing the limit helps only up to 500 blocks; traversal also stops at 100 child-list requests or depth 50 and reports the corresponding reason. There is no resumable full-page export in this release. `content_status.complete` concerns collected blocks, not a lossless representation: Markdown drops formatting and some block types. HTTP failures return errors rather than claiming a partial read succeeded.
 

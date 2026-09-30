@@ -637,7 +637,7 @@ def collection_status(
     response: dict[str, Any], start_cursor: str | None = None,
     seen_cursors: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Describe collection exhaustion, never silently trusting a broken cursor."""
+    """Describe pagination exhaustion subject to status, not inventory completeness."""
 
     warnings: list[str] = []
     has_more = response.get("has_more")
@@ -651,6 +651,20 @@ def collection_status(
             warnings.append("Notion repeated a pagination cursor.")
     elif cursor is not None:
         warnings.append("Notion returned next_cursor while has_more is false.")
+    if "request_status" in response:
+        status = response["request_status"]
+        if not isinstance(status, dict) or status.get("type") not in ("complete", "incomplete"):
+            warnings.append("Notion returned invalid request_status.")
+        else:
+            reason = status.get("incomplete_reason")
+            if "incomplete_reason" in status and (
+                reason != "query_result_limit_reached" or status["type"] != "incomplete"
+            ):
+                warnings.append("Notion returned invalid request_status.incomplete_reason.")
+            if status["type"] == "incomplete":
+                # Only include recognized reason codes in human-readable warnings.
+                suffix = " (query_result_limit_reached)" if reason == "query_result_limit_reached" else ""
+                warnings.append(f"Notion reports an incomplete request{suffix}.")
     return {"scope": "from_cursor" if start_cursor is not None else "from_start",
             "complete": start_cursor is None and has_more is False and not warnings,
             "warnings": warnings}
@@ -757,7 +771,7 @@ def build_search_summary(
             }
         )
 
-    return {
+    summary = {
         "workspace": workspace.name,
         "workspace_key": workspace.key,
         "query": query,
@@ -768,6 +782,9 @@ def build_search_summary(
         "next_cursor": response.get("next_cursor"),
         "results": summarized_results,
     }
+    if "request_status" in response:
+        summary["request_status"] = response["request_status"]
+    return summary
 
 
 def build_page_summary(
@@ -928,8 +945,8 @@ def tool_search(arguments: dict[str, Any]) -> dict[str, Any]:
 
     workspaces = load_workspace_configs()
     workspace = resolve_workspace(arguments.get("workspace"), workspaces)
-    query = (arguments.get("query") or "").strip()
-    if not query:
+    query = arguments.get("query") or ""
+    if not query.strip():
         raise McpProtocolError("search requires a non-empty 'query'.")
 
     page_size = int(arguments.get("page_size", 10))
@@ -1085,7 +1102,9 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "search": {
         "description": (
-            "Search one configured Notion workspace. The workspace selector is required."
+            "Search titles in one configured Notion workspace using Notion's search endpoint. "
+            "Results can be delayed by indexing and are not an exhaustive inventory; "
+            "empty results do not prove absence. The workspace selector is required."
         ),
         "inputSchema": {
             "type": "object",
@@ -1098,7 +1117,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                 },
                 "query": {
                     "type": "string",
-                    "description": "Search query for Notion content.",
+                    "description": "Title query forwarded unchanged to Notion search.",
                 },
                 "page_size": {
                     "type": "integer",

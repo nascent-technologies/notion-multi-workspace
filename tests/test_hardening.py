@@ -91,6 +91,32 @@ class HttpTests(OfflineTests):
                 self.assertEqual(opener.call_count, 2)
                 self.assertTrue(all(call.args[0].method == "POST" for call in opener.call_args_list))
 
+    def test_search_forwards_exact_query_and_keeps_nonmatching_upstream_results(self):
+        query = '  Budget "Q4" 東京  '
+        upstream = page([{
+            "object": "page", "id": PAGE_ID,
+            "properties": {"Name": {"type": "title", "title": [{"plain_text": "Unrelated title"}]}},
+        }])
+        for result_type in ("page", "database", "all"):
+            with self.subTest(result_type=result_type), mock.patch.object(
+                MODULE.request, "urlopen", return_value=response(upstream),
+            ) as opener:
+                result = MODULE.tool_search({
+                    "workspace": "workspace-a", "query": query, "page_size": 7,
+                    "result_type": result_type, "start_cursor": "previous",
+                })
+            req = opener.call_args.args[0]
+            expected = {"query": query, "page_size": 7, "start_cursor": "previous"}
+            if result_type != "all":
+                expected["filter"] = {"property": "object", "value": result_type}
+            self.assertEqual(req.method, "POST")
+            self.assertEqual(req.full_url, "https://api.notion.com/v1/search")
+            self.assertEqual(json.loads(req.data), expected)
+            self.assertEqual(result["query"], query)
+            self.assertEqual(result["count"], 1)
+            self.assertEqual(result["results"][0]["id"], PAGE_ID)
+            self.assertEqual(result["results"][0]["title"], "Unrelated title")
+
     def test_retryable_statuses_are_bounded(self):
         for status in (429, 500, 502, 503, 504, 529):
             with self.subTest(status=status), mock.patch.object(MODULE.request, "urlopen", side_effect=[http_error(status) for _ in range(3)]) as opener:
@@ -169,6 +195,42 @@ class CollectionTests(OfflineTests):
             self.assertEqual(result["collection"]["complete"], complete)
             self.assertEqual(result["has_more"], more)
             self.assertEqual(result["next_cursor"], cursor)
+            self.assertNotIn("request_status", result)
+
+    def test_search_preserves_explicit_status_and_requires_pagination_exhaustion(self):
+        for status in ({"type": "complete"}, {"type": "incomplete"},
+                       {"type": "incomplete", "incomplete_reason": "query_result_limit_reached"}):
+            for start, more, cursor in ((None, False, None), (None, True, "next"),
+                                        ("previous", False, None), (None, False, "unexpected")):
+                with self.subTest(status=status, start=start, more=more, cursor=cursor):
+                    result = MODULE.build_search_summary(
+                        WORKSPACE, {**page([], more, cursor), "request_status": status}, "Example", "page", start,
+                    )
+                    self.assertEqual(result["request_status"], status)
+                    self.assertEqual(result["collection"]["complete"],
+                                     status["type"] == "complete" and start is None and not more and cursor is None)
+                    if status["type"] == "incomplete":
+                        self.assertIn("incomplete request", " ".join(result["collection"]["warnings"]))
+                    if "incomplete_reason" in status:
+                        self.assertIn("query_result_limit_reached", " ".join(result["collection"]["warnings"]))
+
+    def test_search_malformed_request_status_cannot_claim_complete(self):
+        for status in (None, [], "complete", {}, {"type": []}, {"type": "unknown"},
+                       {"type": "complete", "incomplete_reason": "query_result_limit_reached"},
+                       {"type": "complete", "incomplete_reason": None},
+                       {"type": "incomplete", "incomplete_reason": {}},
+                       {"type": "incomplete", "incomplete_reason": "untrusted\nreason\x1b"}):
+            with self.subTest(status=status):
+                result = MODULE.build_search_summary(
+                    WORKSPACE, {**page([]), "request_status": status}, "Example", "page",
+                )
+                self.assertEqual(result["request_status"], status)
+                self.assertFalse(result["collection"]["complete"])
+                warnings = " ".join(result["collection"]["warnings"])
+                self.assertIn("invalid request_status", warnings)
+                self.assertNotIn("untrusted", warnings)
+                self.assertNotIn("\n", warnings)
+                self.assertNotIn("\x1b", warnings)
 
     def test_malformed_and_repeated_cursors_are_explicit(self):
         responses = [page([], True, None), page([], True, ""), page([], True, []),
