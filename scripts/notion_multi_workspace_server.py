@@ -19,10 +19,12 @@ support more than two workspaces without changing code.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
-import traceback
+import time
+from http.client import HTTPException
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,7 +32,15 @@ from urllib import error, parse, request
 
 
 SERVER_NAME = "notion-multi-workspace"
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = "0.3.1"
+SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
+HTTP_TIMEOUT_SECONDS = 15
+READ_MAX_ATTEMPTS = 3
+MAX_RETRY_DELAY_SECONDS = 5
+RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504, 529}
+MAX_BLOCK_REQUESTS = 100
+MAX_BLOCK_DEPTH = 50
+MAX_MESSAGE_BYTES = 4 * 1024 * 1024
 NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -447,27 +457,61 @@ class NotionClient:
             method=method,
         )
 
-        try:
-            with request.urlopen(req) as response:
-                raw = response.read().decode("utf-8")
-                return json.loads(raw) if raw else {}
-        except error.HTTPError as exc:
-            raw = exc.read().decode("utf-8")
-            message = raw
+        # POST search/query are reads; every other POST/PATCH is attempted once.
+        semantic_read = method == "GET" or (
+            method == "POST"
+            and (path == "/search" or re.fullmatch(r"/databases/[^/]+/query", path))
+        )
+        attempts = READ_MAX_ATTEMPTS if semantic_read else 1
+        for attempt in range(attempts):
             try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError:
-                parsed = None
-            if isinstance(parsed, dict):
-                message = parsed.get("message") or parsed.get("code") or raw
-            raise NotionApiError(
-                f"{method} {path} failed for workspace '{self.workspace.name}': "
-                f"{exc.code} {message}"
-            ) from exc
-        except error.URLError as exc:
-            raise NotionApiError(
-                f"Could not reach Notion for workspace '{self.workspace.name}': {exc.reason}"
-            ) from exc
+                with request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
+                    raw = response.read().decode("utf-8")
+                    parsed = json.loads(raw)
+                    if not isinstance(parsed, dict):
+                        raise ValueError("Expected a JSON object")
+                    return parsed
+            except error.HTTPError as exc:
+                retry_delay = min(2 ** attempt, MAX_RETRY_DELAY_SECONDS)
+                retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                if retry_after is not None:
+                    try:
+                        retry_delay = float(retry_after)
+                        if not math.isfinite(retry_delay) or retry_delay < 0:
+                            retry_delay = MAX_RETRY_DELAY_SECONDS + 1
+                    except ValueError:
+                        # Do not retry early when we cannot interpret the server's delay.
+                        retry_delay = MAX_RETRY_DELAY_SECONDS + 1
+                status = exc.code
+                blocked = False
+                try:
+                    error_body = json.loads(exc.read(65536).decode("utf-8"))
+                    blocked = isinstance(error_body, dict) and error_body.get("code") == "public_api_request_blocked"
+                except (ValueError, UnicodeError, OSError, HTTPException):
+                    # An unreadable 429 body might be a permanent block, not a rate limit.
+                    blocked = status == 429
+                finally:
+                    exc.close()
+                if (attempt + 1 < attempts and status in RETRYABLE_HTTP_STATUSES
+                        and not blocked and retry_delay <= MAX_RETRY_DELAY_SECONDS):
+                    time.sleep(retry_delay)
+                    continue
+                suffix = " Write outcome may be unknown; inspect Notion before retrying." if not semantic_read and status >= 500 else ""
+                raise NotionApiError(
+                    f"Notion returned HTTP {status} for workspace '{self.workspace.name}'.{suffix}"
+                ) from exc
+            except (error.URLError, OSError, HTTPException) as exc:
+                if attempt + 1 < attempts:
+                    time.sleep(min(2 ** attempt, MAX_RETRY_DELAY_SECONDS))
+                    continue
+                suffix = " Write outcome may be unknown; inspect Notion before retrying." if not semantic_read else ""
+                raise NotionApiError(
+                    f"Notion transport failed for workspace '{self.workspace.name}'.{suffix}"
+                ) from exc
+            except (ValueError, UnicodeError) as exc:
+                suffix = " Write outcome may be unknown; inspect Notion before retrying." if not semantic_read else ""
+                raise NotionApiError(f"Notion returned an invalid JSON object.{suffix}") from exc
+        raise AssertionError("Unreachable retry state")
 
     def get_self(self) -> dict[str, Any]:
         return self.request_json("GET", "/users/me")
@@ -540,57 +584,169 @@ class NotionClient:
         return self.request_json("PATCH", f"/blocks/{block_id}/children", {"children": children})
 
     def list_block_children(
-        self, block_id: str, block_limit: int = 200
-    ) -> list[dict[str, Any]]:
+        self, block_id: str, block_limit: int = 200,
+        request_budget: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        """Collect siblings with explicit exhaustion and a shared request budget."""
+
+        if request_budget is None:
+            request_budget = {"remaining": MAX_BLOCK_REQUESTS}
         collected: list[dict[str, Any]] = []
         next_cursor: str | None = None
-
+        seen_cursors: set[str] = set()
+        warnings: list[str] = []
+        reasons: list[str] = []
+        complete = False
         while len(collected) < block_limit:
+            if request_budget["remaining"] <= 0:
+                reasons.append("request_limit")
+                break
             query = {"page_size": min(100, block_limit - len(collected))}
             if next_cursor:
                 query["start_cursor"] = next_cursor
-            path = f"/blocks/{block_id}/children"
-            if query:
-                path += "?" + parse.urlencode(query)
-            response = self.request_json("GET", path)
-            results = response.get("results", [])
-            if not isinstance(results, list):
+            request_budget["remaining"] -= 1
+            response = self.request_json(
+                "GET", f"/blocks/{block_id}/children?" + parse.urlencode(query)
+            )
+            results = response.get("results")
+            if not isinstance(results, list) or any(not isinstance(item, dict) for item in results):
+                reasons.append("invalid_results")
+                warnings.append("Notion returned malformed block results.")
                 break
-            collected.extend(results)
-            if not response.get("has_more"):
+            remaining = block_limit - len(collected)
+            collected.extend(results[:remaining])
+            if len(results) > remaining:
+                reasons.append("block_limit")
+            status = collection_status(response, next_cursor, seen_cursors)
+            warnings.extend(status["warnings"])
+            if status["warnings"]:
+                reasons.append("invalid_pagination")
                 break
-            next_cursor = response.get("next_cursor")
-            if not next_cursor:
+            if not response["has_more"]:
+                complete = not reasons
                 break
+            next_cursor = response["next_cursor"]
+            seen_cursors.add(next_cursor)
+        if not complete and not reasons:
+            reasons.append("block_limit")
+        return {"results": collected, "complete": complete,
+                "truncation_reasons": reasons, "warnings": warnings}
 
-        return collected[:block_limit]
+
+def collection_status(
+    response: dict[str, Any], start_cursor: str | None = None,
+    seen_cursors: set[str] | None = None,
+) -> dict[str, Any]:
+    """Describe pagination exhaustion subject to status, not inventory completeness."""
+
+    warnings: list[str] = []
+    has_more = response.get("has_more")
+    cursor = response.get("next_cursor")
+    if not isinstance(has_more, bool):
+        warnings.append("Notion returned missing or invalid has_more.")
+    elif has_more:
+        if not isinstance(cursor, str) or not cursor.strip():
+            warnings.append("Notion returned has_more without a valid next_cursor.")
+        elif cursor == start_cursor or cursor in (seen_cursors or set()):
+            warnings.append("Notion repeated a pagination cursor.")
+    elif cursor is not None:
+        warnings.append("Notion returned next_cursor while has_more is false.")
+    if "request_status" in response:
+        status = response["request_status"]
+        if not isinstance(status, dict) or status.get("type") not in ("complete", "incomplete"):
+            warnings.append("Notion returned invalid request_status.")
+        else:
+            reason = status.get("incomplete_reason")
+            if "incomplete_reason" in status and (
+                reason != "query_result_limit_reached" or status["type"] != "incomplete"
+            ):
+                warnings.append("Notion returned invalid request_status.incomplete_reason.")
+            if status["type"] == "incomplete":
+                # Only include recognized reason codes in human-readable warnings.
+                suffix = " (query_result_limit_reached)" if reason == "query_result_limit_reached" else ""
+                warnings.append(f"Notion reports an incomplete request{suffix}.")
+    return {"scope": "from_cursor" if start_cursor is not None else "from_start",
+            "complete": start_cursor is None and has_more is False and not warnings,
+            "warnings": warnings}
+
+
+RENDERED_BLOCK_TYPES = {
+    "paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item",
+    "numbered_list_item", "to_do", "toggle", "quote", "callout", "code",
+    "divider", "bookmark", "child_page", "table_of_contents",
+}
 
 
 def recurse_blocks_to_markdown(
-    client: NotionClient,
-    block_id: str,
-    max_blocks: int = 200,
-    indent: int = 0,
-) -> tuple[list[str], int]:
-    """Recursively render a page's block tree up to a block limit."""
+    client: NotionClient, block_id: str, max_blocks: int = 200, indent: int = 0,
+) -> tuple[list[str], int, dict[str, Any]]:
+    """Render a bounded block tree; completeness refers to traversal, not fidelity."""
 
     lines: list[str] = []
     consumed = 0
-    for block in client.list_block_children(block_id, block_limit=max_blocks):
-        if consumed >= max_blocks:
-            break
-        lines.extend(render_block_markdown(block, indent=indent))
-        consumed += 1
-        if block.get("has_children") and consumed < max_blocks:
-            child_lines, child_consumed = recurse_blocks_to_markdown(
-                client,
-                block.get("id", ""),
-                max_blocks=max_blocks - consumed,
-                indent=indent + 1,
-            )
-            lines.extend(child_lines)
-            consumed += child_consumed
-    return lines, consumed
+    reasons: set[str] = set()
+    warnings = {"Markdown is a lossy rendering; formatting, metadata, and some block payloads are omitted."}
+    request_budget = {"remaining": MAX_BLOCK_REQUESTS}
+    active_ids: set[str] = set()
+
+    def visit(parent_id: str, depth: int) -> None:
+        nonlocal consumed
+        if depth >= MAX_BLOCK_DEPTH:
+            reasons.add("depth_limit")
+            return
+        if parent_id in active_ids:
+            reasons.add("block_cycle")
+            return
+        active_ids.add(parent_id)
+        collection = client.list_block_children(
+            parent_id, block_limit=max_blocks - consumed, request_budget=request_budget,
+        )
+        reasons.update(collection["truncation_reasons"])
+        warnings.update(collection["warnings"])
+        blocks = collection["results"]
+        for block in blocks:
+            if consumed >= max_blocks:
+                reasons.add("block_limit")
+                break
+            lines.extend(render_block_markdown(block, indent=indent + depth))
+            consumed += 1
+            block_type = block.get("type", "unsupported")
+            if block_type not in RENDERED_BLOCK_TYPES:
+                warnings.add(f"Block type '{block_type}' is represented only as a placeholder or plain text.")
+            if block_type == "child_page":
+                warnings.add("Child-page bodies are not fetched; fetch those pages separately.")
+            if block.get("has_children"):
+                if consumed >= max_blocks:
+                    reasons.add("block_limit")
+                elif not isinstance(block.get("id"), str) or not block["id"]:
+                    reasons.add("missing_block_id")
+                else:
+                    visit(block["id"], depth + 1)
+        active_ids.remove(parent_id)
+
+    visit(block_id, 0)
+    status = {"requested": True, "complete": not reasons, "truncated": bool(reasons),
+              "truncation_reasons": sorted(reasons), "warnings": sorted(warnings),
+              "rendering": "lossy_markdown"}
+    return lines, consumed, status
+
+
+def property_status(page: dict[str, Any]) -> dict[str, Any]:
+    """Surface known truncation without claiming page properties are hydrated."""
+
+    has_more = [name for name, value in page.get("properties", {}).items()
+                if value.get("has_more") is True]
+    warnings = ["Properties are simplified from the page response; property-item pagination is not fetched and completeness is not verified."]
+    if has_more:
+        warnings.append("Notion reports additional values for: " + ", ".join(has_more))
+    return {"complete": False if has_more else None, "has_more": has_more, "warnings": warnings}
+
+
+def response_results(response: dict[str, Any]) -> list[dict[str, Any]]:
+    results = response.get("results")
+    if not isinstance(results, list) or any(not isinstance(item, dict) for item in results):
+        raise NotionApiError("Notion returned malformed collection results.")
+    return results
 
 
 def build_search_summary(
@@ -598,11 +754,12 @@ def build_search_summary(
     response: dict[str, Any],
     query: str,
     result_type: str,
+    start_cursor: str | None = None,
 ) -> dict[str, Any]:
     """Reduce a Notion search response to a smaller summary payload."""
 
     summarized_results = []
-    for result in response.get("results", []):
+    for result in response_results(response):
         summarized_results.append(
             {
                 "object": result.get("object"),
@@ -614,16 +771,20 @@ def build_search_summary(
             }
         )
 
-    return {
+    summary = {
         "workspace": workspace.name,
         "workspace_key": workspace.key,
         "query": query,
         "result_type": result_type,
         "count": len(summarized_results),
-        "has_more": bool(response.get("has_more")),
+        "has_more": response.get("has_more"),
+        "collection": collection_status(response, start_cursor),
         "next_cursor": response.get("next_cursor"),
         "results": summarized_results,
     }
+    if "request_status" in response:
+        summary["request_status"] = response["request_status"]
+    return summary
 
 
 def build_page_summary(
@@ -631,6 +792,7 @@ def build_page_summary(
     page: dict[str, Any],
     content_markdown: str | None,
     rendered_block_count: int,
+    content_status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Reduce a Notion page response plus content into a single payload."""
 
@@ -651,6 +813,11 @@ def build_page_summary(
             "in_trash": page.get("in_trash"),
             "parent": format_parent(page.get("parent", {})),
             "properties": simplified_properties,
+            "property_status": property_status(page),
+        },
+        "content_status": content_status or {
+            "requested": False, "complete": None, "truncated": False,
+            "truncation_reasons": [], "warnings": [], "rendering": "lossy_markdown",
         },
         "rendered_block_count": rendered_block_count,
         "content_markdown": content_markdown,
@@ -687,11 +854,12 @@ def build_database_query_summary(
     workspace: WorkspaceConfig,
     database: dict[str, Any],
     response: dict[str, Any],
+    start_cursor: str | None = None,
 ) -> dict[str, Any]:
     summarized_results = []
-    for result in response.get("results", []):
+    for result in response_results(response):
         if result.get("object") != "page":
-            continue
+            raise NotionApiError("Notion database query returned a non-page result.")
         summarized_results.append(
             {
                 "id": result.get("id"),
@@ -699,6 +867,7 @@ def build_database_query_summary(
                 "url": result.get("url"),
                 "last_edited_time": result.get("last_edited_time"),
                 "parent": format_parent(result.get("parent", {})),
+                "property_status": property_status(result),
                 "properties": {
                     key: simplify_property_value(value)
                     for key, value in result.get("properties", {}).items()
@@ -714,7 +883,8 @@ def build_database_query_summary(
             "url": database.get("url"),
         },
         "count": len(summarized_results),
-        "has_more": bool(response.get("has_more")),
+        "has_more": response.get("has_more"),
+        "collection": collection_status(response, start_cursor),
         "next_cursor": response.get("next_cursor"),
         "results": summarized_results,
     }
@@ -775,8 +945,8 @@ def tool_search(arguments: dict[str, Any]) -> dict[str, Any]:
 
     workspaces = load_workspace_configs()
     workspace = resolve_workspace(arguments.get("workspace"), workspaces)
-    query = (arguments.get("query") or "").strip()
-    if not query:
+    query = arguments.get("query") or ""
+    if not query.strip():
         raise McpProtocolError("search requires a non-empty 'query'.")
 
     page_size = int(arguments.get("page_size", 10))
@@ -793,7 +963,7 @@ def tool_search(arguments: dict[str, Any]) -> dict[str, Any]:
         result_type=result_type,
         start_cursor=arguments.get("start_cursor"),
     )
-    return build_search_summary(workspace, response, query, result_type)
+    return build_search_summary(workspace, response, query, result_type, arguments.get("start_cursor"))
 
 
 def tool_fetch_page(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -816,8 +986,9 @@ def tool_fetch_page(arguments: dict[str, Any]) -> dict[str, Any]:
 
     content_markdown = None
     rendered_block_count = 0
+    content_status = None
     if include_content:
-        lines, rendered_block_count = recurse_blocks_to_markdown(
+        lines, rendered_block_count, content_status = recurse_blocks_to_markdown(
             client,
             page.get("id", ""),
             max_blocks=block_limit,
@@ -829,6 +1000,7 @@ def tool_fetch_page(arguments: dict[str, Any]) -> dict[str, Any]:
         page=page,
         content_markdown=content_markdown,
         rendered_block_count=rendered_block_count,
+        content_status=content_status,
     )
 
 
@@ -869,7 +1041,7 @@ def tool_query_database(arguments: dict[str, Any]) -> dict[str, Any]:
         filter_payload=filter_payload,
         sorts=sorts,
     )
-    return build_database_query_summary(workspace, database, response)
+    return build_database_query_summary(workspace, database, response, arguments.get("start_cursor"))
 
 
 def tool_create_page(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -930,7 +1102,9 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "search": {
         "description": (
-            "Search one configured Notion workspace. The workspace selector is required."
+            "Search titles in one configured Notion workspace using Notion's search endpoint. "
+            "Results can be delayed by indexing and are not an exhaustive inventory; "
+            "empty results do not prove absence. The workspace selector is required."
         ),
         "inputSchema": {
             "type": "object",
@@ -943,7 +1117,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                 },
                 "query": {
                     "type": "string",
-                    "description": "Search query for Notion content.",
+                    "description": "Title query forwarded unchanged to Notion search.",
                 },
                 "page_size": {
                     "type": "integer",
@@ -1078,62 +1252,124 @@ def tool_descriptors() -> list[dict[str, Any]]:
                 "name": name,
                 "description": tool["description"],
                 "inputSchema": tool["inputSchema"],
+                "annotations": {
+                    "readOnlyHint": name not in {"create_page", "append_block_children"},
+                    "destructiveHint": False,
+                    "idempotentHint": name not in {"create_page", "append_block_children"},
+                    "openWorldHint": True,
+                },
             }
         )
     return descriptors
 
 
-def handle_request(message: dict[str, Any]) -> dict[str, Any] | None:
-    """Process one JSON-RPC request."""
+def validate_arguments(arguments: Any, schema: dict[str, Any]) -> None:
+    """Validate the small input-schema subset advertised by this server."""
 
-    method = message.get("method")
-    params = message.get("params", {})
+    if not isinstance(arguments, dict):
+        raise McpProtocolError("Tool arguments must be an object.")
+    for name in schema.get("required", []):
+        if name not in arguments:
+            raise McpProtocolError(f"Missing required argument '{name}'.")
+    for name, value in arguments.items():
+        definition = schema["properties"].get(name)
+        if definition is None:
+            raise McpProtocolError(f"Unknown argument '{name}'.")
+        expected = definition["type"]
+        valid = {
+            "string": isinstance(value, str),
+            "boolean": isinstance(value, bool),
+            "integer": isinstance(value, int) and not isinstance(value, bool),
+            "object": isinstance(value, dict),
+            "array": isinstance(value, list),
+        }[expected]
+        if not valid:
+            raise McpProtocolError(f"Argument '{name}' must be {expected}.")
+        if expected == "string" and not value.strip():
+            raise McpProtocolError(f"Argument '{name}' must not be blank.")
+        if expected == "integer" and not definition.get("minimum", value) <= value <= definition.get("maximum", value):
+            raise McpProtocolError(f"Argument '{name}' is outside its allowed range.")
+        if "enum" in definition and value not in definition["enum"]:
+            raise McpProtocolError(f"Argument '{name}' is not an allowed value.")
+        if expected == "array" and any(not isinstance(item, dict) for item in value):
+            raise McpProtocolError(f"Argument '{name}' must contain objects.")
+
+
+@dataclass
+class McpSession:
+    initialized: bool = False
+    ready: bool = False
+
+
+def handle_request(message: Any, session: McpSession | None = None) -> dict[str, Any] | None:
+    """Process one MCP message; a session enforces stdio initialization order."""
+
+    if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
+        return error_response(None, -32600, "Expected one JSON-RPC 2.0 object.")
     request_id = message.get("id")
-
-    if method == "notifications/initialized":
+    if "id" in message and (isinstance(request_id, bool) or not isinstance(request_id, (str, int))):
+        return error_response(None, -32600, "Request id must be a string or integer.")
+    if "method" not in message and "id" in message and ("result" in message or "error" in message):
+        # The server sends no requests; an unsolicited response must not elicit another response.
         return None
+    method = message.get("method")
+    if not isinstance(method, str) or not method or "result" in message or "error" in message:
+        return error_response(request_id, -32600, "Invalid request envelope.")
+    params = message.get("params", {})
+    if "id" not in message:
+        # Notifications never run tool handlers (especially writes) and never receive replies.
+        if method == "notifications/initialized" and isinstance(params, dict) and session and session.initialized:
+            session.ready = True
+        return None
+    if not isinstance(params, dict):
+        return error_response(request_id, -32602, "params must be an object.")
     if method == "ping":
         return success_response(request_id, {})
     if method == "initialize":
-        client_protocol = params.get("protocolVersion") or "2024-11-05"
-        return success_response(
-            request_id,
-            {
-                "protocolVersion": client_protocol,
-                "capabilities": {
-                    "tools": {
-                        "listChanged": False,
-                    }
-                },
-                "serverInfo": {
-                    "name": SERVER_NAME,
-                    "version": SERVER_VERSION,
-                },
-            },
-        )
+        if session and session.initialized:
+            return error_response(request_id, -32600, "Session is already initialized.")
+        version = params.get("protocolVersion")
+        client_info = params.get("clientInfo")
+        if (not isinstance(version, str) or not version
+                or not isinstance(params.get("capabilities"), dict)
+                or not isinstance(client_info, dict)
+                or not isinstance(client_info.get("name"), str)
+                or not isinstance(client_info.get("version"), str)):
+            return error_response(request_id, -32602, "initialize requires protocolVersion, capabilities, and clientInfo.")
+        if session:
+            session.initialized = True
+        return success_response(request_id, {
+            "protocolVersion": version if version in SUPPORTED_PROTOCOL_VERSIONS else SUPPORTED_PROTOCOL_VERSIONS[-1],
+            "capabilities": {"tools": {"listChanged": False}},
+            "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+        })
+    if session and not session.ready:
+        return error_response(request_id, -32600, "Complete initialization before calling methods.")
     if method == "tools/list":
+        if "cursor" in params:
+            return error_response(request_id, -32602, "This server has no tool-list cursor.")
         return success_response(request_id, {"tools": tool_descriptors()})
     if method == "tools/call":
         tool_name = params.get("name")
-        arguments = params.get("arguments") or {}
-        if tool_name not in TOOLS:
-            return error_response(request_id, -32601, f"Unknown tool '{tool_name}'.")
+        if not isinstance(tool_name, str) or tool_name not in TOOLS:
+            return error_response(request_id, -32602, "Unknown or invalid tool name.")
+        arguments = params.get("arguments", {})
+        try:
+            validate_arguments(arguments, TOOLS[tool_name]["inputSchema"])
+        except McpProtocolError as exc:
+            return error_response(request_id, -32602, str(exc))
         try:
             payload = TOOLS[tool_name]["handler"](arguments)
             return success_response(request_id, make_tool_text(payload))
         except (ConfigError, McpProtocolError, NotionApiError) as exc:
-            return success_response(
-                request_id,
-                {
-                    "content": [{"type": "text", "text": str(exc)}],
-                    "isError": True,
-                },
-            )
+            return success_response(request_id, {
+                "content": [{"type": "text", "text": str(exc)}], "isError": True,
+            })
         except Exception as exc:  # noqa: BLE001
-            sys.stderr.write(traceback.format_exc())
-            return error_response(request_id, -32000, str(exc))
-
-    return error_response(request_id, -32601, f"Method '{method}' not found.")
+            # Avoid echoing upstream payloads or credentials in unexpected exceptions.
+            sys.stderr.write(f"Unexpected tool failure: {type(exc).__name__}\n")
+            return error_response(request_id, -32603, "Internal tool error.")
+    return error_response(request_id, -32601, "Method not found.")
 
 
 def success_response(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
@@ -1148,57 +1384,52 @@ def error_response(request_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
-def read_message() -> dict[str, Any] | None:
-    """Read one Content-Length framed JSON-RPC message from stdin."""
+def reject_json_constant(value: str) -> None:
+    raise ValueError(f"Invalid JSON constant: {value}")
 
-    headers: dict[str, str] = {}
-    while True:
-        raw_line = sys.stdin.buffer.readline()
-        if not raw_line:
-            return None
-        line = raw_line.decode("utf-8").strip()
-        if not line:
-            break
-        if ":" not in line:
-            raise McpProtocolError(f"Malformed header line: {line}")
-        name, value = line.split(":", 1)
-        headers[name.lower()] = value.strip()
 
-    if "content-length" not in headers:
-        raise McpProtocolError("Missing Content-Length header.")
-    length = int(headers["content-length"])
-    body = sys.stdin.buffer.read(length)
-    if not body:
-        return None
-    return json.loads(body.decode("utf-8"))
+def read_message() -> Any:
+    """Read one bounded newline-delimited UTF-8 JSON message; EOF raises EOFError."""
+
+    raw = sys.stdin.buffer.readline(MAX_MESSAGE_BYTES + 1)
+    if not raw:
+        raise EOFError
+    if len(raw) > MAX_MESSAGE_BYTES:
+        while raw and not raw.endswith(b"\n"):
+            raw = sys.stdin.buffer.readline(MAX_MESSAGE_BYTES + 1)
+        raise McpProtocolError("Message exceeds the 4 MiB limit.")
+    if not raw.endswith(b"\n"):
+        raise McpProtocolError("Message must end with a newline.")
+    return json.loads(raw.decode("utf-8"), parse_constant=reject_json_constant)
 
 
 def write_message(message: dict[str, Any]) -> None:
-    """Write one Content-Length framed JSON-RPC response to stdout."""
+    """Write exactly one UTF-8 JSON object followed by a newline to stdout."""
 
-    body = json.dumps(message).encode("utf-8")
-    header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
-    sys.stdout.buffer.write(header)
-    sys.stdout.buffer.write(body)
+    # Escaping also safely preserves a client's lone surrogate in a string ID.
+    body = json.dumps(message, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    sys.stdout.buffer.write(body + b"\n")
     sys.stdout.buffer.flush()
 
 
 def serve_forever() -> int:
-    """Run the MCP stdio server loop."""
+    """Keep serving after malformed messages, and exit cleanly on EOF."""
 
+    session = McpSession()
     try:
         while True:
-            message = read_message()
-            if message is None:
+            try:
+                message = read_message()
+            except EOFError:
                 return 0
-            response = handle_request(message)
-            if response is not None and message.get("id") is not None:
+            except (ValueError, UnicodeError, RecursionError, McpProtocolError):
+                write_message(error_response(None, -32700, "Invalid newline-delimited JSON message."))
+                continue
+            response = handle_request(message, session)
+            if response is not None:
                 write_message(response)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, BrokenPipeError):
         return 0
-    except Exception:  # noqa: BLE001
-        sys.stderr.write(traceback.format_exc())
-        return 1
 
 
 def main() -> int:

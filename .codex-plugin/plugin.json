@@ -1,7 +1,7 @@
 {
   "name": "notion-multi-workspace",
-  "version": "0.3.0",
-  "description": "Read-only plugin for routing Notion reads across explicitly selected workspaces.",
+  "version": "0.3.1",
+  "description": "Read and write Notion content across explicitly selected workspaces.",
   "author": {
     "name": "nascent-technologies",
     "url": "https://github.com/nascent-technologies"
@@ -19,21 +19,21 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Notion Multi-Workspace",
-    "shortDescription": "Search and fetch pages across explicitly selected Notion workspaces.",
-    "longDescription": "Read-only multi-workspace Notion access with explicit workspace routing on every tool call.",
+    "shortDescription": "Search, read, create pages, and append blocks across Notion workspaces.",
+    "longDescription": "Local multi-workspace Notion access with explicit workspace routing for reads and writes.",
     "developerName": "nascent-technologies",
     "category": "Productivity",
     "capabilities": [
       "Interactive",
-      "Read"
+      "Read",
+      "Write"
     ],
-    "websiteURL": "https://www.notion.so/",
-    "privacyPolicyURL": "https://www.notion.com/help/privacy",
-    "termsOfServiceURL": "https://www.notion.so/legal/terms-of-use",
+    "websiteURL": "https://github.com/nascent-technologies/notion-multi-workspace",
     "defaultPrompt": [
       "List the configured Notion workspaces.",
       "Search Workspace A for engineering notes.",
-      "Fetch a page from Workspace B."
+      "Fetch a page from Workspace B.",
+      "Create a page under my specified parent in Workspace A."
     ],
     "brandColor": "#111111"
   }

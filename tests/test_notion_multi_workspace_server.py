@@ -18,6 +18,14 @@ SPEC.loader.exec_module(MODULE)
 
 
 class NotionMultiWorkspaceServerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        environment = mock.patch.dict(os.environ, {MODULE.DOTENV_ENV_VAR: os.devnull}, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
+        network = mock.patch.object(MODULE.request, "urlopen", side_effect=AssertionError("Unexpected network access"))
+        network.start()
+        self.addCleanup(network.stop)
+
     def restore_env(self, previous: dict[str, Optional[str]]) -> None:
         for key, value in previous.items():
             if value is None:
@@ -103,9 +111,9 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
         )
 
     def test_canonicalize_notion_id_from_raw_and_url(self) -> None:
-        raw_id = "33daa70e43f1801c8441e88c36e22608"
-        expected = "33daa70e-43f1-801c-8441-e88c36e22608"
-        url = "https://www.notion.so/Page-Title-33daa70e43f1801c8441e88c36e22608?pvs=4"
+        raw_id = "00000000000040008000000000000001"
+        expected = "00000000-0000-4000-8000-000000000001"
+        url = "https://www.notion.so/Page-Title-00000000000040008000000000000001?pvs=4"
 
         self.assertEqual(MODULE.canonicalize_notion_id(raw_id), expected)
         self.assertEqual(MODULE.canonicalize_notion_id(url), expected)
@@ -143,7 +151,7 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
             "properties": {
                 "Name": {
                     "type": "title",
-                    "title": [{"plain_text": "Loan Margin Call Spec"}],
+                    "title": [{"plain_text": "Example Project Notes"}],
                 },
                 "Status": {
                     "type": "status",
@@ -151,18 +159,18 @@ class NotionMultiWorkspaceServerTests(unittest.TestCase):
                 },
                 "Reviewers": {
                     "type": "people",
-                    "people": [{"name": "Julian Kocher"}, {"id": "user-2"}],
+                    "people": [{"name": "Example Reviewer"}, {"id": "user-2"}],
                 },
             }
         }
 
-        self.assertEqual(MODULE.extract_page_title(page), "Loan Margin Call Spec")
+        self.assertEqual(MODULE.extract_page_title(page), "Example Project Notes")
         simplified = {
             key: MODULE.simplify_property_value(value)
             for key, value in page["properties"].items()
         }
         self.assertEqual(simplified["Status"], "In Progress")
-        self.assertEqual(simplified["Reviewers"], ["Julian Kocher", "user-2"])
+        self.assertEqual(simplified["Reviewers"], ["Example Reviewer", "user-2"])
 
     def test_build_database_summary_and_query_summary(self) -> None:
         workspace = MODULE.WorkspaceConfig("workspace-a", "Workspace A", "token-a")
