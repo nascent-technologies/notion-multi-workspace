@@ -533,7 +533,9 @@ runpy.run_path(sys.argv[1], run_name="__main__")
         responses = self.run_server(
             nested + b'{"jsonrpc":"2.0","id":2,"method":"ping"}\n'
         )
-        self.assertEqual(responses[0]["error"]["code"], -32700)
+        # Parser recursion limits vary by Python version; a parsed array is
+        # still an invalid JSON-RPC request. Both errors must preserve recovery.
+        self.assertIn(responses[0]["error"]["code"], (-32700, -32600))
         self.assertEqual(responses[1], {"jsonrpc": "2.0", "id": 2, "result": {}})
         self.assertEqual(len(responses), 2)
 
